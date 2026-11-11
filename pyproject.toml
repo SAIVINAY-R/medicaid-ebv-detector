@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "medicaid-ebv-detector"
+version = "1.0.0"
+description = "Medicaid Provider Enrollment Fraud Intelligence System for Detecting Enroll, Bill, Vanish (EBV) Sham Providers"
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [
+    { name = "State Medicaid Fraud Intelligence ML Team" }
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Security"
+]
+
+[project.scripts]
+ebv-demo = "demo:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
