@@ -8,8 +8,11 @@ Pure standard library HTTP server (ThreadingHTTPServer) providing:
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import math
 import os
 from pathlib import Path
+import sys
+import traceback
 from typing import Any, Dict, List, Optional
 from urllib.parse import parse_qs, urlparse
 
@@ -28,6 +31,28 @@ from ..pipeline.checkpoint2 import Checkpoint2Pipeline
 from ..synthetic.generator import SyntheticEBVGenerator
 
 STATIC_DIR = Path(__file__).parent / "static"
+
+
+def safe_float(val: Any, default: float = 0.0) -> float:
+    """Safely convert any value (None, empty string, NaN) to float."""
+    if val is None or val == "":
+        return default
+    try:
+        f = float(val)
+        return default if math.isnan(f) else f
+    except (ValueError, TypeError):
+        return default
+
+
+def safe_int(val: Any, default: int = 0) -> int:
+    """Safely convert any value to int."""
+    if val is None or val == "":
+        return default
+    try:
+        f = float(val)
+        return default if math.isnan(f) else int(f)
+    except (ValueError, TypeError):
+        return default
 
 
 class EBVRequestHandler(BaseHTTPRequestHandler):
@@ -140,6 +165,7 @@ class EBVRequestHandler(BaseHTTPRequestHandler):
                 res = self.server_instance.evaluate_enrollment(body)
                 self._send_json_response(200, res)
             except Exception as e:
+                traceback.print_exc(file=sys.stderr)
                 self._send_json_response(500, {"error": f"Evaluation error: {str(e)}"})
             return
 
@@ -148,6 +174,7 @@ class EBVRequestHandler(BaseHTTPRequestHandler):
                 res = self.server_instance.evaluate_claims(body)
                 self._send_json_response(200, res)
             except Exception as e:
+                traceback.print_exc(file=sys.stderr)
                 self._send_json_response(500, {"error": f"Claims surveillance error: {str(e)}"})
             return
 
@@ -301,25 +328,26 @@ class EBVServer:
 
         persons = []
         for p in payload.get("disclosed_persons", []):
-            persons.append(PersonDisclosure(
-                first_name=p.get("first_name", "Victor"),
-                last_name=p.get("last_name", "Vanish"),
-                ssn_last4=p.get("ssn_last4", "4912"),
-                date_of_birth=p.get("date_of_birth", "1992-04-18"),
-                role=p.get("role", "OWNER"),
-                direct_ownership_pct=float(p.get("direct_ownership_pct", 1.0))
-            ))
+            if isinstance(p, dict):
+                persons.append(PersonDisclosure(
+                    first_name=p.get("first_name") or "Victor",
+                    last_name=p.get("last_name") or "Vanish",
+                    ssn_last4=str(p.get("ssn_last4") or "4912"),
+                    date_of_birth=str(p.get("date_of_birth") or "1992-04-18"),
+                    role=p.get("role") or "OWNER",
+                    direct_ownership_pct=safe_float(p.get("direct_ownership_pct"), 1.0)
+                ))
 
-        npi = payload.get("npi", "1900000001")
+        npi = str(payload.get("npi") or "1900000001").strip()
         app = ProviderApplication(
-            application_id=f"APP-{npi[-6:]}",
+            application_id=f"APP-{npi[-6:]}" if len(npi) >= 6 else "APP-000001",
             npi=npi,
-            legal_business_name=payload.get("legal_business_name", "Sample Healthcare LLC"),
-            tin=payload.get("tin", "56-1234567"),
-            service_category=payload.get("service_category", "BEHAVIORAL_HEALTH"),
-            formation_date=payload.get("formation_date", "2026-01-01"),
-            application_date=payload.get("application_date", "2026-02-01"),
-            phone=payload.get("phone", "919-555-8822"),
+            legal_business_name=payload.get("legal_business_name") or "Sample Healthcare LLC",
+            tin=str(payload.get("tin") or "56-1234567"),
+            service_category=payload.get("service_category") or "BEHAVIORAL_HEALTH",
+            formation_date=payload.get("formation_date") or "2026-01-01",
+            application_date=payload.get("application_date") or "2026-02-01",
+            phone=payload.get("phone") or "919-555-8822",
             primary_address=addr,
             eft_account=eft,
             disclosed_persons=persons,
@@ -330,7 +358,7 @@ class EBVServer:
         # Handle GR-4 Upstream Corporate Hierarchy if provided
         holding_org_id = payload.get("holding_org_id")
         upstream_owner_id = payload.get("upstream_owner_id")
-        upstream_pct = float(payload.get("upstream_pct", 0.0))
+        upstream_pct = safe_float(payload.get("upstream_pct"), 0.0)
 
         if holding_org_id and upstream_owner_id and upstream_pct > 0.0:
             edge1 = OwnershipEdge(
@@ -393,14 +421,14 @@ class EBVServer:
 
     def evaluate_claims(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Simulate claims surveillance through Checkpoint 2."""
-        npi = payload.get("npi", "1900000056")
-        service_cat = payload.get("service_category", "BEHAVIORAL_HEALTH")
-        months = int(payload.get("months_enrolled", 3))
-        paid = float(payload.get("total_paid_30d", 186000.0))
-        max_hrs = float(payload.get("max_daily_hours", 36.0))
-        inpat = int(payload.get("inpatient_overlaps", 3))
-        post = int(payload.get("post_mortem_claims", 2))
-        migrating = int(payload.get("migrating_patients", 30))
+        npi = str(payload.get("npi") or "1900000056").strip()
+        service_cat = payload.get("service_category") or "BEHAVIORAL_HEALTH"
+        months = safe_int(payload.get("months_enrolled"), 3)
+        paid = safe_float(payload.get("total_paid_30d"), 186000.0)
+        max_hrs = safe_float(payload.get("max_daily_hours"), 36.0)
+        inpat = safe_int(payload.get("inpatient_overlaps"), 3)
+        post = safe_int(payload.get("post_mortem_claims"), 2)
+        migrating = safe_int(payload.get("migrating_patients"), 30)
 
         # Synthetic claims generation for surveillance evaluation
         claims = []

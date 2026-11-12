@@ -728,20 +728,26 @@
       const firstName = nameParts[0] || 'Victor';
       const lastName = nameParts.slice(1).join(' ') || 'Vanish';
 
+      const upVal = document.getElementById('upstream_pct').value;
+      const upstreamPct = upVal && !isNaN(parseFloat(upVal)) ? parseFloat(upVal) / 100.0 : 0.0;
+
+      const pctVal = document.getElementById('person_pct').value;
+      const personPct = pctVal && !isNaN(parseFloat(pctVal)) ? parseFloat(pctVal) / 100.0 : 1.0;
+
       const payload = {
-        legal_business_name: document.getElementById('legal_business_name').value,
-        npi: document.getElementById('npi').value,
-        tin: document.getElementById('tin').value,
-        service_category: document.getElementById('service_category').value,
-        formation_date: document.getElementById('formation_date').value,
-        application_date: document.getElementById('application_date').value,
-        phone: document.getElementById('phone').value,
+        legal_business_name: document.getElementById('legal_business_name').value || 'Sample Healthcare LLC',
+        npi: document.getElementById('npi').value || '1900000001',
+        tin: document.getElementById('tin').value || '56-1234567',
+        service_category: document.getElementById('service_category').value || 'BEHAVIORAL_HEALTH',
+        formation_date: document.getElementById('formation_date').value || '2026-01-01',
+        application_date: document.getElementById('application_date').value || '2026-02-01',
+        phone: document.getElementById('phone').value || '919-555-8822',
         primary_address: {
-          address_line1: document.getElementById('address_line1').value,
-          address_line2: document.getElementById('address_line2').value,
-          city: document.getElementById('city').value,
-          state: document.getElementById('state').value,
-          zip5: document.getElementById('zip5').value,
+          address_line1: document.getElementById('address_line1').value || '100 Medical Plaza',
+          address_line2: document.getElementById('address_line2').value || '',
+          city: document.getElementById('city').value || 'Raleigh',
+          state: document.getElementById('state').value || 'NC',
+          zip5: document.getElementById('zip5').value || '27601',
           is_cmra: document.getElementById('is_cmra').checked,
           is_po_box: document.getElementById('is_po_box').checked,
           is_virtual_mailbox: document.getElementById('is_virtual').checked,
@@ -749,22 +755,22 @@
           rdi: document.getElementById('is_residential').checked ? 'RESIDENTIAL' : 'COMMERCIAL'
         },
         eft_account: {
-          routing_number: document.getElementById('eft_routing').value,
-          account_number: document.getElementById('eft_account').value
+          routing_number: document.getElementById('eft_routing').value || '053000196',
+          account_number: document.getElementById('eft_account').value || '1122334455'
         },
         disclosed_persons: [{
           first_name: firstName,
           last_name: lastName,
-          role: document.getElementById('person_role').value,
-          direct_ownership_pct: parseFloat(document.getElementById('person_pct').value || 100) / 100,
-          ssn_last4: document.getElementById('ssn_last4').value,
-          date_of_birth: document.getElementById('dob').value
+          role: document.getElementById('person_role').value || 'OWNER',
+          direct_ownership_pct: personPct,
+          ssn_last4: document.getElementById('ssn_last4').value || '4912',
+          date_of_birth: document.getElementById('dob').value || '1992-04-18'
         }],
-        device_fingerprint_id: document.getElementById('device_id').value,
-        holding_org_id: document.getElementById('holding_org_id').value,
-        upstream_owner_id: document.getElementById('upstream_owner_id').value,
-        upstream_pct: parseFloat(document.getElementById('upstream_pct').value || 0) / 100,
-        policy_manual_text: document.getElementById('policy_text').value
+        device_fingerprint_id: document.getElementById('device_id').value || 'DEV-TEST-001',
+        holding_org_id: document.getElementById('holding_org_id').value || '',
+        upstream_owner_id: document.getElementById('upstream_owner_id').value || '',
+        upstream_pct: upstreamPct,
+        policy_manual_text: document.getElementById('policy_text').value || ''
       };
 
       try {
@@ -774,6 +780,10 @@
           body: JSON.stringify(payload)
         });
         const data = await res.json();
+        if (!res.ok || data.error) {
+          alert('Evaluation error: ' + (data.error || 'Server error ' + res.status));
+          return;
+        }
         renderResults(data);
       } catch (err) {
         alert('Evaluation failed: ' + err.message);
@@ -781,6 +791,10 @@
     }
 
     function renderResults(data) {
+      if (!data || !data.layer1_decision) {
+        alert(data && data.error ? data.error : 'Invalid response from screening engine');
+        return;
+      }
       document.getElementById('results-placeholder').style.display = 'none';
       const container = document.getElementById('results-container');
       container.style.display = 'block';
@@ -896,6 +910,10 @@
           body: JSON.stringify(payload)
         });
         const data = await res.json();
+        if (!res.ok || data.error) {
+          alert('Claims surveillance error: ' + (data.error || 'Server error ' + res.status));
+          return;
+        }
         
         const resDiv = document.getElementById('claims-results');
         resDiv.style.display = 'block';
