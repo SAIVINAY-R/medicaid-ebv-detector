@@ -7,6 +7,7 @@ Supports point-in-time filtering via effective dates.
 
 import json
 import sqlite3
+import threading
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from .schema import EdgeType, GraphEdge, GraphNode, NodeType
@@ -16,13 +17,14 @@ class GraphStore:
     """Relational graph engine backed by SQLite with Recursive CTE support."""
 
     def __init__(self, db_path: str = ":memory:"):
-        self.conn = sqlite3.connect(db_path)
+        self.lock = threading.RLock()
+        self.conn = sqlite3.connect(db_path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self._init_schema()
 
     def _init_schema(self):
         """Initialize tables and indexes."""
-        with self.conn:
+        with self.lock, self.conn:
             self.conn.execute("""
                 CREATE TABLE IF NOT EXISTS graph_nodes (
                     node_id TEXT PRIMARY KEY,
@@ -66,7 +68,7 @@ class GraphStore:
 
     def add_node(self, node: GraphNode):
         """Insert or replace graph node."""
-        with self.conn:
+        with self.lock, self.conn:
             self.conn.execute("""
                 INSERT OR REPLACE INTO graph_nodes (node_id, node_type, label, is_seed, seed_source, attributes_json)
                 VALUES (?, ?, ?, ?, ?, ?)
@@ -81,7 +83,7 @@ class GraphStore:
 
     def add_edge(self, edge: GraphEdge):
         """Insert edge between two nodes."""
-        with self.conn:
+        with self.lock, self.conn:
             self.conn.execute("""
                 INSERT INTO graph_edges (source_id, target_id, edge_type, weight, ownership_percentage, effective_start, effective_end)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -97,77 +99,83 @@ class GraphStore:
 
     def get_node(self, node_id: str) -> Optional[GraphNode]:
         """Fetch node by ID."""
-        cur = self.conn.cursor()
-        cur.execute("SELECT * FROM graph_nodes WHERE node_id = ?", (node_id,))
-        row = cur.fetchone()
-        if not row:
-            return None
-        return GraphNode(
-            node_id=row["node_id"],
-            node_type=NodeType(row["node_type"]),
-            label=row["label"],
-            is_seed=bool(row["is_seed"]),
-            seed_source=row["seed_source"],
-            attributes=json.loads(row["attributes_json"] or "{}")
-        )
-
-    def get_all_seeds(self) -> List[GraphNode]:
-        """Retrieve all known-bad seed nodes."""
-        cur = self.conn.cursor()
-        cur.execute("SELECT * FROM graph_nodes WHERE is_seed = 1")
-        seeds = []
-        for row in cur.fetchall():
-            seeds.append(GraphNode(
+        with self.lock:
+            cur = self.conn.cursor()
+            cur.execute("SELECT * FROM graph_nodes WHERE node_id = ?", (node_id,))
+            row = cur.fetchone()
+            if not row:
+                return None
+            return GraphNode(
                 node_id=row["node_id"],
                 node_type=NodeType(row["node_type"]),
                 label=row["label"],
-                is_seed=True,
+                is_seed=bool(row["is_seed"]),
                 seed_source=row["seed_source"],
                 attributes=json.loads(row["attributes_json"] or "{}")
-            ))
-        return seeds
+            )
+
+    def get_all_seeds(self) -> List[GraphNode]:
+        """Retrieve all known-bad seed nodes."""
+        with self.lock:
+            cur = self.conn.cursor()
+            cur.execute("SELECT * FROM graph_nodes WHERE is_seed = 1")
+            seeds = []
+            for row in cur.fetchall():
+                seeds.append(GraphNode(
+                    node_id=row["node_id"],
+                    node_type=NodeType(row["node_type"]),
+                    label=row["label"],
+                    is_seed=True,
+                    seed_source=row["seed_source"],
+                    attributes=json.loads(row["attributes_json"] or "{}")
+                ))
+            return seeds
 
     def get_neighbors(
         self, node_id: str, direction: str = "BOTH"
     ) -> List[Tuple[str, EdgeType, float, float]]:
         """Return (neighbor_id, edge_type, weight, ownership_pct)."""
-        cur = self.conn.cursor()
-        results = []
-        if direction in ("OUT", "BOTH"):
-            cur.execute("""
-                SELECT target_id AS n_id, edge_type, weight, ownership_percentage
-                FROM graph_edges WHERE source_id = ?
-            """, (node_id,))
-            for r in cur.fetchall():
-                results.append((r["n_id"], EdgeType(r["edge_type"]), r["weight"], r["ownership_percentage"]))
-        if direction in ("IN", "BOTH"):
-            cur.execute("""
-                SELECT source_id AS n_id, edge_type, weight, ownership_percentage
-                FROM graph_edges WHERE target_id = ?
-            """, (node_id,))
-            for r in cur.fetchall():
-                results.append((r["n_id"], EdgeType(r["edge_type"]), r["weight"], r["ownership_percentage"]))
-        return results
+        with self.lock:
+            cur = self.conn.cursor()
+            results = []
+            if direction in ("OUT", "BOTH"):
+                cur.execute("""
+                    SELECT target_id AS n_id, edge_type, weight, ownership_percentage
+                    FROM graph_edges WHERE source_id = ?
+                """, (node_id,))
+                for r in cur.fetchall():
+                    results.append((r["n_id"], EdgeType(r["edge_type"]), r["weight"], r["ownership_percentage"]))
+            if direction in ("IN", "BOTH"):
+                cur.execute("""
+                    SELECT source_id AS n_id, edge_type, weight, ownership_percentage
+                    FROM graph_edges WHERE target_id = ?
+                """, (node_id,))
+                for r in cur.fetchall():
+                    results.append((r["n_id"], EdgeType(r["edge_type"]), r["weight"], r["ownership_percentage"]))
+            return results
 
     def get_node_degree(self, node_id: str) -> int:
         """Calculate total undirected degree of a node."""
-        cur = self.conn.cursor()
-        cur.execute("""
-            SELECT COUNT(*) AS deg FROM (
-                SELECT edge_id FROM graph_edges WHERE source_id = ?
-                UNION ALL
-                SELECT edge_id FROM graph_edges WHERE target_id = ?
-            )
-        """, (node_id, node_id))
-        row = cur.fetchone()
-        return row["deg"] if row else 0
+        with self.lock:
+            cur = self.conn.cursor()
+            cur.execute("""
+                SELECT COUNT(*) AS deg FROM (
+                    SELECT edge_id FROM graph_edges WHERE source_id = ?
+                    UNION ALL
+                    SELECT edge_id FROM graph_edges WHERE target_id = ?
+                )
+            """, (node_id, node_id))
+            row = cur.fetchone()
+            return row["deg"] if row else 0
 
     def get_all_nodes(self) -> List[str]:
         """Return list of all node IDs."""
-        cur = self.conn.cursor()
-        cur.execute("SELECT node_id FROM graph_nodes")
-        return [r["node_id"] for r in cur.fetchall()]
+        with self.lock:
+            cur = self.conn.cursor()
+            cur.execute("SELECT node_id FROM graph_nodes")
+            return [r["node_id"] for r in cur.fetchall()]
 
     def close(self):
-        self.conn.close()
+        with self.lock:
+            self.conn.close()
 

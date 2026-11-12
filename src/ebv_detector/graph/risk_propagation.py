@@ -54,16 +54,15 @@ class SeedRiskPropagator:
         }
 
         # Build adjacency graph with supernode-damped weights
-        cur = self.store.conn.cursor()
-        cur.execute("SELECT source_id, target_id, weight FROM graph_edges")
-        
-        # Undirected adjacency list: node -> {neighbor: weight}
         adj: Dict[str, Dict[str, float]] = defaultdict(dict)
-        for r in cur.fetchall():
-            u, v, base_w = r["source_id"], r["target_id"], r["weight"]
-            eff_w = self.supernode_mgr.get_effective_edge_weight(u, v, base_w)
-            adj[u][v] = eff_w
-            adj[v][u] = eff_w
+        with self.store.lock:
+            cur = self.store.conn.cursor()
+            cur.execute("SELECT source_id, target_id, weight FROM graph_edges")
+            for r in cur.fetchall():
+                u, v, base_w = r["source_id"], r["target_id"], r["weight"]
+                eff_w = self.supernode_mgr.get_effective_edge_weight(u, v, base_w)
+                adj[u][v] = eff_w
+                adj[v][u] = eff_w
 
         # Compute out-degree total weights for transition probability
         out_weight_sum: Dict[str, float] = {}

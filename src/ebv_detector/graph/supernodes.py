@@ -26,19 +26,20 @@ class SupernodeManager:
 
     def scan_for_supernodes(self) -> Set[str]:
         """Identify all nodes in the graph whose degree exceeds threshold."""
-        cur = self.store.conn.cursor()
-        cur.execute("""
-            SELECT node_id FROM (
-                SELECT source_id AS node_id FROM graph_edges
-                UNION ALL
-                SELECT target_id AS node_id FROM graph_edges
-            )
-            GROUP BY node_id
-            HAVING COUNT(*) >= ?
-        """, (self.degree_threshold,))
-        
-        self._supernodes = {r[0] for r in cur.fetchall()}
-        return self._supernodes
+        with self.store.lock:
+            cur = self.store.conn.cursor()
+            cur.execute("""
+                SELECT node_id FROM (
+                    SELECT source_id AS node_id FROM graph_edges
+                    UNION ALL
+                    SELECT target_id AS node_id FROM graph_edges
+                )
+                GROUP BY node_id
+                HAVING COUNT(*) >= ?
+            """, (self.degree_threshold,))
+            
+            self._supernodes = {r[0] for r in cur.fetchall()}
+            return self._supernodes
 
     def is_supernode(self, node_id: str) -> bool:
         """Check if a node has been identified as a supernode."""
