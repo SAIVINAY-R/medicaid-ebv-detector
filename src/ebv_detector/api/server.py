@@ -101,7 +101,7 @@ class EBVRequestHandler(BaseHTTPRequestHandler):
                 self.wfile.write(b"Static assets not found.")
             return
 
-        if path == "/api/health":
+        if path in ("/api/health", "/health", "/healthz"):
             self._send_json_response(200, {
                 "status": "healthy",
                 "service": "Medicaid Provider Fraud Intelligence API",
@@ -534,7 +534,11 @@ class EBVServer:
             self.httpd.server_close()
 
 
-def run_server(host: str = "127.0.0.1", port: int = 8080):
+def run_server(host: Optional[str] = None, port: Optional[int] = None):
+    if host is None:
+        host = os.environ.get("HOST", "0.0.0.0")
+    if port is None:
+        port = int(os.environ.get("PORT", "8080"))
     server = EBVServer(host=host, port=port)
     server.start()
 

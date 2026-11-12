@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: medicaid-ebv-detector
+    runtime: python
+    plan: free
+    region: oregon
+    buildCommand: "pip install -e ."
+    startCommand: "python3 serve.py"
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHONUNBUFFERED
+        value: "1"
