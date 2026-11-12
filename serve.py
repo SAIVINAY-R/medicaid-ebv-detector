@@ -3,7 +3,13 @@
 
 import argparse
 import os
+from pathlib import Path
 import sys
+
+# Ensure src/ is on sys.path so ebv_detector is always importable
+src_dir = Path(__file__).resolve().parent / "src"
+if str(src_dir) not in sys.path:
+    sys.path.insert(0, str(src_dir))
 
 from ebv_detector.api.server import run_server
 
