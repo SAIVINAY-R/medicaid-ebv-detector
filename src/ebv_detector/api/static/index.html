@@ -3,981 +3,1228 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Medicaid Provider Fraud Intelligence — EBV Detector</title>
-  <style>
-    :root {
-      --bg: #0f172a;
-      --card-bg: #1e293b;
-      --border: #334155;
-      --text: #f8fafc;
-      --text-muted: #94a3b8;
-      --primary: #3b82f6;
-      --primary-hover: #2563eb;
-      --danger: #ef4444;
-      --danger-bg: rgba(239, 68, 68, 0.15);
-      --warning: #f59e0b;
-      --warning-bg: rgba(245, 158, 11, 0.15);
-      --success: #10b981;
-      --success-bg: rgba(16, 185, 129, 0.15);
-      --info: #06b6d4;
-    }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-      background-color: var(--bg);
-      color: var(--text);
-      line-height: 1.5;
-      padding-bottom: 60px;
-    }
-    header {
-      background: #111827;
-      border-bottom: 1px solid var(--border);
-      padding: 16px 28px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      position: sticky;
-      top: 0;
-      z-index: 100;
-    }
-    .brand {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-    }
-    .brand h1 {
-      font-size: 1.15rem;
-      font-weight: 700;
-      letter-spacing: -0.02em;
-    }
-    .badge {
-      font-size: 0.75rem;
-      padding: 3px 8px;
-      border-radius: 9999px;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-    }
-    .badge-blue { background: rgba(59, 130, 246, 0.2); color: #60a5fa; border: 1px solid #3b82f6; }
-    .badge-green { background: var(--success-bg); color: #34d399; border: 1px solid #10b981; }
-    .badge-red { background: var(--danger-bg); color: #f87171; border: 1px solid #ef4444; }
-    .badge-yellow { background: var(--warning-bg); color: #fbbf24; border: 1px solid #f59e0b; }
-
-    .nav-tabs {
-      display: flex;
-      gap: 8px;
-    }
-    .tab-btn {
-      background: transparent;
-      border: 1px solid transparent;
-      color: var(--text-muted);
-      padding: 6px 14px;
-      border-radius: 6px;
-      cursor: pointer;
-      font-size: 0.85rem;
-      font-weight: 500;
-      transition: all 0.15s ease;
-    }
-    .tab-btn:hover { color: var(--text); background: var(--card-bg); }
-    .tab-btn.active { color: #fff; background: var(--card-bg); border-color: var(--border); }
-
-    .container {
-      max-width: 1400px;
-      margin: 24px auto;
-      padding: 0 20px;
-    }
-
-    .preset-bar {
-      background: var(--card-bg);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 14px 20px;
-      margin-bottom: 24px;
-      display: flex;
-      align-items: center;
-      gap: 16px;
-      flex-wrap: wrap;
-    }
-    .preset-bar label {
-      font-size: 0.85rem;
-      font-weight: 600;
-      color: var(--text-muted);
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-    }
-    select, input, textarea {
-      background: #0f172a;
-      border: 1px solid var(--border);
-      color: var(--text);
-      padding: 8px 12px;
-      border-radius: 6px;
-      font-size: 0.9rem;
-      outline: none;
-      transition: border 0.15s ease;
-    }
-    select:focus, input:focus, textarea:focus { border-color: var(--primary); }
-
-    .main-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 24px;
-    }
-    @media (max-width: 1024px) {
-      .main-grid { grid-template-columns: 1fr; }
-    }
-
-    .card {
-      background: var(--card-bg);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 24px;
-      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.2);
-    }
-    .card h2 {
-      font-size: 1.1rem;
-      font-weight: 700;
-      margin-bottom: 16px;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-
-    .form-grid {
-      display: grid;
-      grid-template-columns: repeat(2, 1fr);
-      gap: 14px;
-    }
-    .form-group {
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-    }
-    .form-group.full { grid-column: span 2; }
-    label {
-      font-size: 0.8rem;
-      font-weight: 600;
-      color: var(--text-muted);
-    }
-    .checkbox-group {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 12px;
-      padding: 8px 0;
-    }
-    .checkbox-label {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      font-size: 0.85rem;
-      color: var(--text);
-      cursor: pointer;
-    }
-
-    .btn {
-      background: var(--primary);
-      color: #fff;
-      border: none;
-      padding: 10px 18px;
-      border-radius: 6px;
-      font-size: 0.9rem;
-      font-weight: 600;
-      cursor: pointer;
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      transition: background 0.15s;
-    }
-    .btn:hover { background: var(--primary-hover); }
-    .btn-secondary {
-      background: transparent;
-      border: 1px solid var(--border);
-      color: var(--text-muted);
-    }
-    .btn-secondary:hover { background: #334155; color: #fff; }
-
-    /* Results styling */
-    .decision-banner {
-      border-radius: 8px;
-      padding: 18px 20px;
-      margin-bottom: 20px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 16px;
-    }
-    .banner-danger { background: var(--danger-bg); border: 1px solid var(--danger); color: #fca5a5; }
-    .banner-warning { background: var(--warning-bg); border: 1px solid var(--warning); color: #fde68a; }
-    .banner-success { background: var(--success-bg); border: 1px solid var(--success); color: #a7f3d0; }
-
-    .decision-title {
-      font-size: 1.15rem;
-      font-weight: 800;
-      letter-spacing: -0.01em;
-    }
-    .decision-sub {
-      font-size: 0.85rem;
-      opacity: 0.9;
-    }
-
-    .score-meter {
-      background: #0f172a;
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 14px 18px;
-      margin-bottom: 20px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-    }
-    .score-val {
-      font-size: 1.75rem;
-      font-weight: 800;
-    }
-
-    .evidence-list {
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-      margin-top: 14px;
-    }
-    .evidence-item {
-      background: #0f172a;
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      padding: 12px 14px;
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-    }
-    .ev-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-    }
-    .ev-code {
-      font-family: monospace;
-      font-size: 0.8rem;
-      font-weight: 700;
-      color: #93c5fd;
-    }
-    .ev-desc {
-      font-size: 0.85rem;
-      color: var(--text);
-    }
-
-    .audit-box {
-      font-family: monospace;
-      font-size: 0.75rem;
-      background: #090d16;
-      padding: 12px;
-      border-radius: 6px;
-      color: var(--text-muted);
-      word-break: break-all;
-      margin-top: 14px;
-      border: 1px solid #1e293b;
-    }
-
-    .tab-content { display: none; }
-    .tab-content.active { display: block; }
-  </style>
-</head>
-<body>
-
-  <header>
-    <div class="brand">
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-      </svg>
-      <h1>Medicaid Provider Fraud Intelligence</h1>
-      <span class="badge badge-blue">ADR-0001 Compliant</span>
-    </div>
-    <div class="nav-tabs">
-      <button class="tab-btn active" onclick="switchTab('enrollment')">Enrollment Screening</button>
-      <button class="tab-btn" onclick="switchTab('claims')">Claims Surveillance</button>
-      <button class="tab-btn" onclick="switchTab('seeds')">Seed Registry</button>
-      <button class="tab-btn" onclick="switchTab('audit')">WORM Audit Log</button>
-    </div>
-  </header>
-
-  <div class="container">
-
-    <!-- TAB 1: ENROLLMENT SCREENING -->
-    <div id="tab-enrollment" class="tab-content active">
-
-      <!-- Preset Bar -->
-      <div class="preset-bar">
-        <label>Load Demonstration Scenario:</label>
-        <select id="scenario-selector" onchange="loadSelectedScenario()" style="min-width: 380px;">
-          <option value="">-- Choose a Pre-Configured Test Case --</option>
-          <option value="control">Control: Triangle Pediatrics PLLC (Legitimate Established 2012)</option>
-          <option value="scenario1">Scenario 1: Apex Autism LLC (Formed 8d Ago + Mailbox Store CMRA)</option>
-          <option value="scenario2">Scenario 2: Horizon Community Recovery (Straw Owner + 48% Excluded Felon)</option>
-          <option value="scenario3">Scenario 3: Beacon Southern Healthcare (Phoenix Re-Entry with Terminated EFT)</option>
-          <option value="scenario4">Scenario 4: Serenity Community Living (Cloned Policy Manual Ring)</option>
-        </select>
-        <button class="btn btn-secondary" onclick="resetForm()">Reset Form</button>
-      </div>
-
-      <div class="main-grid">
-
-        <!-- Application Form Column -->
-        <div class="card">
-          <h2>
-            <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-              <path d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
-            </svg>
-            Provider Enrollment Application (CPMM)
-          </h2>
-
-          <form id="enrollment-form" onsubmit="submitEnrollment(event)">
-
-            <div class="form-grid">
-              <div class="form-group full">
-                <label>Legal Business Name</label>
-                <input type="text" id="legal_business_name" required placeholder="e.g. Triangle Health Partners LLC">
-              </div>
-
-              <div class="form-group">
-                <label>National Provider Identifier (NPI)</label>
-                <input type="text" id="npi" required placeholder="10-digit NPI" value="1900000001">
-              </div>
-
-              <div class="form-group">
-                <label>Federal Tax ID (TIN / EIN)</label>
-                <input type="text" id="tin" required placeholder="XX-XXXXXXX" value="56-1234567">
-              </div>
-
-              <div class="form-group">
-                <label>Service Category</label>
-                <select id="service_category">
-                  <option value="PEDIATRIC_CLINIC">Pediatric Clinic (Limited Risk)</option>
-                  <option value="FAMILY_PRACTICE">Family Practice (Limited Risk)</option>
-                  <option value="COMMUNITY_HEALTH_FQHC">FQHC Health Center (Limited Risk)</option>
-                  <option value="BEHAVIORAL_HEALTH">Behavioral Health / SUD (Moderate Risk)</option>
-                  <option value="AUTISM_CLINIC_FACILITY">Autism ABA Clinic (Moderate Risk)</option>
-                  <option value="SOBER_LIVING_FACILITY">Sober Living Facility (Moderate Risk)</option>
-                  <option value="ADULT_DAY_CARE">Adult Day Care (Moderate Risk)</option>
-                  <option value="HCBS">Home & Community Based Services (High Risk)</option>
-                  <option value="HOSPICE">Hospice (High Risk)</option>
-                </select>
-              </div>
-
-              <div class="form-group">
-                <label>Secretary of State Formation Date</label>
-                <input type="date" id="formation_date" value="2026-01-24">
-              </div>
-
-              <div class="form-group">
-                <label>Application Submission Date</label>
-                <input type="date" id="application_date" value="2026-02-01">
-              </div>
-
-              <div class="form-group">
-                <label>Telephone</label>
-                <input type="text" id="phone" value="919-555-8822">
-              </div>
-
-              <!-- Address Section -->
-              <div class="form-group full">
-                <label>Practice Location Address</label>
-                <input type="text" id="address_line1" required placeholder="Street address" value="1204 Main St">
-              </div>
-
-              <div class="form-group">
-                <label>Suite / PMB</label>
-                <input type="text" id="address_line2" placeholder="Suite or PMB #" value="PMB 402">
-              </div>
-
-              <div class="form-group">
-                <label>City, State, Zip</label>
-                <div style="display: flex; gap: 6px;">
-                  <input type="text" id="city" value="Raleigh" style="flex: 2;">
-                  <input type="text" id="state" value="NC" style="flex: 1;">
-                  <input type="text" id="zip5" value="27601" style="flex: 1;">
-                </div>
-              </div>
-
-              <div class="form-group full">
-                <label>Address Hygiene Flags (Melissa / USPS Attributes)</label>
-                <div class="checkbox-group">
-                  <label class="checkbox-label"><input type="checkbox" id="is_cmra"> CMRA (Mailbox Store)</label>
-                  <label class="checkbox-label"><input type="checkbox" id="is_po_box"> PO Box</label>
-                  <label class="checkbox-label"><input type="checkbox" id="is_virtual"> Virtual Mailbox / PMB</label>
-                  <label class="checkbox-label"><input type="checkbox" id="is_residential"> Residential (RDI)</label>
-                </div>
-              </div>
-
-              <!-- EFT Banking -->
-              <div class="form-group">
-                <label>EFT Bank Routing Number</label>
-                <input type="text" id="eft_routing" value="053000196">
-              </div>
-
-              <div class="form-group">
-                <label>EFT Bank Account Number</label>
-                <input type="text" id="eft_account" value="5544332211">
-              </div>
-
-              <!-- Disclosed Personnel -->
-              <div class="form-group">
-                <label>Disclosed Owner / Officer Name</label>
-                <input type="text" id="person_name" value="Victor Vanish">
-              </div>
-
-              <div class="form-group">
-                <label>Owner Role & Direct Equity %</label>
-                <div style="display: flex; gap: 6px;">
-                  <select id="person_role" style="flex: 2;">
-                    <option value="OWNER">Owner (Direct)</option>
-                    <option value="MANAGING_EMPLOYEE">Managing Employee</option>
-                    <option value="AUTHORIZED_OFFICIAL">Authorized Official</option>
-                  </select>
-                  <input type="number" id="person_pct" value="100" min="0" max="100" style="flex: 1;" placeholder="%">
-                </div>
-              </div>
-
-              <div class="form-group">
-                <label>Owner SSN Last 4 & Date of Birth</label>
-                <div style="display: flex; gap: 6px;">
-                  <input type="text" id="ssn_last4" value="4912" maxlength="4" style="flex: 1;" placeholder="SSN Last 4">
-                  <input type="date" id="dob" value="1992-04-18" style="flex: 2;">
-                </div>
-              </div>
-
-              <div class="form-group">
-                <label>Device Fingerprint ID</label>
-                <input type="text" id="device_id" value="DEV-TEST-001">
-              </div>
-
-              <!-- Upstream Corporate Holding (GR-4) -->
-              <div class="form-group full">
-                <label>Upstream Holding Company (Optional - For GR-4 Indirect Ownership)</label>
-                <div style="display: flex; gap: 6px;">
-                  <input type="text" id="holding_org_id" placeholder="Parent Holding Org ID" style="flex: 2;">
-                  <input type="text" id="upstream_owner_id" placeholder="Ultimate Owner ID / Seed" style="flex: 2;">
-                  <input type="number" id="upstream_pct" placeholder="Pct %" min="0" max="100" style="flex: 1;">
-                </div>
-              </div>
-
-              <!-- Policy Manual / Narratives -->
-              <div class="form-group full">
-                <label>Policy Manual / Compliance Narrative (MinHash Template Check)</label>
-                <textarea id="policy_text" rows="3" placeholder="Enter clinical documentation or policy manual text...">Standard behavioral health compliance and clinical operating procedures manual.</textarea>
-              </div>
-
-            </div>
-
-            <div style="margin-top: 20px; display: flex; gap: 12px;">
-              <button type="submit" class="btn">
-                <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                  <path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
-                </svg>
-                Run Fraud & Risk Screening
-              </button>
-              <button type="button" class="btn btn-secondary" onclick="resetForm()">Clear</button>
-            </div>
-
-          </form>
-        </div>
-
-        <!-- Evaluation Results Column -->
-        <div class="card">
-          <h2>
-            <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-              <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/>
-            </svg>
-            Automated Screening Assessment
-          </h2>
-
-          <div id="results-placeholder" style="padding: 60px 20px; text-align: center; color: var(--text-muted);">
-            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="margin: 0 auto 12px; display: block; opacity: 0.5;">
-              <path d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
-            </svg>
-            Enter provider application details or select a demonstration scenario above, then click <strong>Run Fraud & Risk Screening</strong> to see the real-time decision analysis.
-          </div>
-
-          <div id="results-container" style="display: none;">
-
-            <!-- Decision Banner -->
-            <div id="decision-banner" class="decision-banner">
-              <div>
-                <div id="decision-title" class="decision-title">FRAUD / STATUTORY DENIAL GROUNDS</div>
-                <div id="decision-subtitle" class="decision-sub">42 CFR 455.416 mandatory denial grounds triggered.</div>
-              </div>
-              <span id="decision-badge" class="badge badge-red">DENIED_GROUNDS</span>
-            </div>
-
-            <!-- Score Meter -->
-            <div class="score-meter">
-              <div>
-                <div style="font-size: 0.8rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase;">
-                  Advisory Queue Priority
-                </div>
-                <div style="font-size: 0.85rem; color: #94a3b8;" id="assigned-aca-tier">
-                  ACA Categorical Tier: HIGH
-                </div>
-              </div>
-              <div style="text-align: right;">
-                <div id="priority-score-val" class="score-val" style="color: #ef4444;">94.0</div>
-                <div id="risk-level-badge" class="badge badge-red">CRITICAL RISK</div>
-              </div>
-            </div>
-
-            <!-- Statutory Citations -->
-            <div id="statutory-grounds-box" style="margin-bottom: 18px; display: none;">
-              <label style="color: #f87171;">STATUTORY GROUNDS (42 CFR 455.416):</label>
-              <ul id="statutory-list" style="margin-left: 20px; font-size: 0.85rem; color: #fca5a5; margin-top: 4px;"></ul>
-            </div>
-
-            <!-- Recommended Actions -->
-            <div id="actions-box" style="margin-bottom: 18px;">
-              <label style="color: #60a5fa;">RECOMMENDED ACTIONS:</label>
-              <ul id="actions-list" style="margin-left: 20px; font-size: 0.85rem; color: #93c5fd; margin-top: 4px;"></ul>
-            </div>
-
-            <!-- Evidence Items -->
-            <div>
-              <label>SURFACED EXPLAINABLE EVIDENCE:</label>
-              <div id="evidence-items-list" class="evidence-list"></div>
-            </div>
-
-            <!-- Audit Trail -->
-            <div class="audit-box">
-              <strong>WORM AUDIT VERIFICATION:</strong><br>
-              <span id="audit-sha">SHA-256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855</span><br>
-              <span id="audit-id">Record ID: AUDIT-000001 | Status: Signed</span>
-            </div>
-
-          </div>
-
-        </div>
-
-      </div>
-
-    </div>
-
-    <!-- TAB 2: MMIS CLAIMS SURVEILLANCE -->
-    <div id="tab-claims" class="tab-content">
-      <div class="card" style="max-width: 900px; margin: 0 auto;">
-        <h2>Checkpoint 2: MMIS Early Billing Surveillance Simulator</h2>
-        <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 20px;">
-          Monitors enrolled providers during their first 6-12 months of billing to catch zero-to-millions ramps, impossible clinician hours, hospital inpatient overlaps, and kickback patient cohort migration.
-        </p>
-
-        <form id="claims-form" onsubmit="submitClaimsSurveillance(event)">
-          <div class="form-grid">
-            <div class="form-group">
-              <label>Billing Provider NPI</label>
-              <input type="text" id="clm_npi" value="1900000056">
-            </div>
-            <div class="form-group">
-              <label>Service Category</label>
-              <select id="clm_category">
-                <option value="BEHAVIORAL_HEALTH">Behavioral Health / SUD</option>
-                <option value="SOBER_LIVING_FACILITY">Sober Living Facility</option>
-                <option value="AUTISM_CLINIC_FACILITY">Autism ABA Clinic</option>
-                <option value="HCBS">HCBS Personal Care</option>
-              </select>
-            </div>
-            <div class="form-group">
-              <label>Months Since Enrollment</label>
-              <input type="number" id="clm_months" value="3" min="1" max="12">
-            </div>
-            <div class="form-group">
-              <label>Total 30-Day Paid Amount ($)</label>
-              <input type="number" id="clm_paid" value="186000" min="0">
-            </div>
-            <div class="form-group">
-              <label>Max Hours Billed in 24h by Single Clinician</label>
-              <input type="number" id="clm_hours" value="36" min="1" max="100">
-            </div>
-            <div class="form-group">
-              <label>Hospital Inpatient Overlap Claims</label>
-              <input type="number" id="clm_inpatient" value="3" min="0">
-            </div>
-            <div class="form-group">
-              <label>Post-Mortem Claims (After Date of Death)</label>
-              <input type="number" id="clm_deceased" value="2" min="0">
-            </div>
-            <div class="form-group">
-              <label>Patients Migrating from Suspended Provider</label>
-              <input type="number" id="clm_migrating" value="30" min="0">
-            </div>
-          </div>
-
-          <div style="margin-top: 20px;">
-            <button type="submit" class="btn">Evaluate Claims Surveillance</button>
-          </div>
-        </form>
-
-        <div id="claims-results" style="margin-top: 24px; display: none;"></div>
-      </div>
-    </div>
-
-    <!-- TAB 3: SEED REGISTRY -->
-    <div id="tab-seeds" class="tab-content">
-      <div class="card">
-        <h2>Active Known-Bad Seed Database (LEIE, SAM, State Terminations)</h2>
-        <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 16px;">
-          These primary-source exclusion and sanction feeds are matched in real-time across Layer 1 rules, M3 graph traversal, and Personalized PageRank propagation.
-        </p>
-        <div id="seeds-table-container">Loading active seeds...</div>
-      </div>
-    </div>
-
-    <!-- TAB 4: AUDIT LOG -->
-    <div id="tab-audit" class="tab-content">
-      <div class="card">
-        <h2>Immutable WORM Audit Trail Explorer</h2>
-        <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 16px;">
-          Cryptographically chained SHA-256 decision records ensuring non-repudiation and auditability under NC RFP Attachment C Section 5.
-        </p>
-        <div id="audit-table-container">Loading audit trail...</div>
-      </div>
-    </div>
-
-  </div>
+  <title>Medicaid Provider Fraud Intelligence — EBV Detector (React 18)</title>
+  
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- React 18, ReactDOM, and Babel Standalone for JSX -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
   <script>
-    let activeScenarios = {};
-
-    function switchTab(tabId) {
-      document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
-      document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-      
-      const targetBtn = Array.from(document.querySelectorAll('.tab-btn')).find(b => b.getAttribute('onclick').includes(tabId));
-      if (targetBtn) targetBtn.classList.add('active');
-      
-      const targetContent = document.getElementById(`tab-${tabId}`);
-      if (targetContent) targetContent.classList.add('active');
-
-      if (tabId === 'seeds') fetchSeeds();
-      if (tabId === 'audit') fetchAuditLog();
-    }
-
-    // Load pre-configured scenarios from API
-    async function loadScenarios() {
-      try {
-        const res = await fetch('/api/scenarios');
-        activeScenarios = await res.json();
-      } catch (e) {
-        console.error('Failed to load scenarios', e);
-      }
-    }
-
-    function loadSelectedScenario() {
-      const key = document.getElementById('scenario-selector').value;
-      if (!key || !activeScenarios[key]) return;
-
-      const sc = activeScenarios[key];
-      document.getElementById('legal_business_name').value = sc.legal_business_name || '';
-      document.getElementById('npi').value = sc.npi || '';
-      document.getElementById('tin').value = sc.tin || '';
-      document.getElementById('service_category').value = sc.service_category || 'BEHAVIORAL_HEALTH';
-      document.getElementById('formation_date').value = sc.formation_date || '';
-      document.getElementById('application_date').value = sc.application_date || '';
-      document.getElementById('phone').value = sc.phone || '';
-
-      if (sc.primary_address) {
-        document.getElementById('address_line1').value = sc.primary_address.address_line1 || '';
-        document.getElementById('address_line2').value = sc.primary_address.address_line2 || '';
-        document.getElementById('city').value = sc.primary_address.city || 'Raleigh';
-        document.getElementById('state').value = sc.primary_address.state || 'NC';
-        document.getElementById('zip5').value = sc.primary_address.zip5 || '27601';
-        document.getElementById('is_cmra').checked = !!sc.primary_address.is_cmra;
-        document.getElementById('is_po_box').checked = !!sc.primary_address.is_po_box;
-        document.getElementById('is_virtual').checked = !!sc.primary_address.is_virtual_mailbox;
-        document.getElementById('is_residential').checked = (sc.primary_address.rdi === 'RESIDENTIAL');
-      }
-
-      if (sc.eft_account) {
-        document.getElementById('eft_routing').value = sc.eft_account.routing_number || '';
-        document.getElementById('eft_account').value = sc.eft_account.account_number || '';
-      }
-
-      if (sc.disclosed_persons && sc.disclosed_persons[0]) {
-        const p = sc.disclosed_persons[0];
-        document.getElementById('person_name').value = `${p.first_name} ${p.last_name}`;
-        document.getElementById('person_role').value = p.role || 'OWNER';
-        document.getElementById('person_pct').value = (p.direct_ownership_pct * 100) || 100;
-        document.getElementById('ssn_last4').value = p.ssn_last4 || '';
-        document.getElementById('dob').value = p.date_of_birth || '';
-      }
-
-      document.getElementById('device_id').value = sc.device_fingerprint_id || 'DEV-TEST-001';
-      document.getElementById('holding_org_id').value = sc.holding_org_id || '';
-      document.getElementById('upstream_owner_id').value = sc.upstream_owner_id || '';
-      document.getElementById('upstream_pct').value = sc.upstream_pct || '';
-      document.getElementById('policy_text').value = sc.policy_manual_text || '';
-
-      // Auto submit on scenario select
-      submitEnrollment(new Event('submit'));
-    }
-
-    function resetForm() {
-      document.getElementById('enrollment-form').reset();
-      document.getElementById('scenario-selector').value = '';
-      document.getElementById('results-placeholder').style.display = 'block';
-      document.getElementById('results-container').style.display = 'none';
-    }
-
-    async function submitEnrollment(e) {
-      if (e) e.preventDefault();
-
-      const nameParts = document.getElementById('person_name').value.trim().split(' ');
-      const firstName = nameParts[0] || 'Victor';
-      const lastName = nameParts.slice(1).join(' ') || 'Vanish';
-
-      const upVal = document.getElementById('upstream_pct').value;
-      const upstreamPct = upVal && !isNaN(parseFloat(upVal)) ? parseFloat(upVal) / 100.0 : 0.0;
-
-      const pctVal = document.getElementById('person_pct').value;
-      const personPct = pctVal && !isNaN(parseFloat(pctVal)) ? parseFloat(pctVal) / 100.0 : 1.0;
-
-      const payload = {
-        legal_business_name: document.getElementById('legal_business_name').value || 'Sample Healthcare LLC',
-        npi: document.getElementById('npi').value || '1900000001',
-        tin: document.getElementById('tin').value || '56-1234567',
-        service_category: document.getElementById('service_category').value || 'BEHAVIORAL_HEALTH',
-        formation_date: document.getElementById('formation_date').value || '2026-01-01',
-        application_date: document.getElementById('application_date').value || '2026-02-01',
-        phone: document.getElementById('phone').value || '919-555-8822',
-        primary_address: {
-          address_line1: document.getElementById('address_line1').value || '100 Medical Plaza',
-          address_line2: document.getElementById('address_line2').value || '',
-          city: document.getElementById('city').value || 'Raleigh',
-          state: document.getElementById('state').value || 'NC',
-          zip5: document.getElementById('zip5').value || '27601',
-          is_cmra: document.getElementById('is_cmra').checked,
-          is_po_box: document.getElementById('is_po_box').checked,
-          is_virtual_mailbox: document.getElementById('is_virtual').checked,
-          is_pmb: document.getElementById('is_virtual').checked,
-          rdi: document.getElementById('is_residential').checked ? 'RESIDENTIAL' : 'COMMERCIAL'
-        },
-        eft_account: {
-          routing_number: document.getElementById('eft_routing').value || '053000196',
-          account_number: document.getElementById('eft_account').value || '1122334455'
-        },
-        disclosed_persons: [{
-          first_name: firstName,
-          last_name: lastName,
-          role: document.getElementById('person_role').value || 'OWNER',
-          direct_ownership_pct: personPct,
-          ssn_last4: document.getElementById('ssn_last4').value || '4912',
-          date_of_birth: document.getElementById('dob').value || '1992-04-18'
-        }],
-        device_fingerprint_id: document.getElementById('device_id').value || 'DEV-TEST-001',
-        holding_org_id: document.getElementById('holding_org_id').value || '',
-        upstream_owner_id: document.getElementById('upstream_owner_id').value || '',
-        upstream_pct: upstreamPct,
-        policy_manual_text: document.getElementById('policy_text').value || ''
-      };
-
-      try {
-        const res = await fetch('/api/evaluate/enrollment', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        });
-        const data = await res.json();
-        if (!res.ok || data.error) {
-          alert('Evaluation error: ' + (data.error || 'Server error ' + res.status));
-          return;
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#eff6ff',
+              500: '#3b82f6',
+              600: '#2563eb',
+              700: '#1d4ed8',
+              900: '#1e3a8a',
+            }
+          }
         }
-        renderResults(data);
-      } catch (err) {
-        alert('Evaluation failed: ' + err.message);
       }
     }
-
-    function renderResults(data) {
-      if (!data || !data.layer1_decision) {
-        alert(data && data.error ? data.error : 'Invalid response from screening engine');
-        return;
-      }
-      document.getElementById('results-placeholder').style.display = 'none';
-      const container = document.getElementById('results-container');
-      container.style.display = 'block';
-
-      const banner = document.getElementById('decision-banner');
-      const title = document.getElementById('decision-title');
-      const subtitle = document.getElementById('decision-subtitle');
-      const badge = document.getElementById('decision-badge');
-      const scoreVal = document.getElementById('priority-score-val');
-      const riskBadge = document.getElementById('risk-level-badge');
-      const acaTier = document.getElementById('assigned-aca-tier');
-
-      const status = data.layer1_decision.status;
-      const grounds = data.layer1_decision.statutory_grounds || [];
-
-      acaTier.innerText = `ACA Categorical Risk Tier: ${data.layer1_decision.assigned_aca_risk_tier} (42 CFR 455.450)`;
-      scoreVal.innerText = data.advisory_score.priority_score.toFixed(1);
-
-      // Status styles
-      banner.className = 'decision-banner';
-      if (status === 'DENIED_GROUNDS') {
-        banner.classList.add('banner-danger');
-        title.innerText = 'FRAUD / MANDATORY DENIAL GROUNDS DETECTED';
-        subtitle.innerText = 'Statutory exclusion, prohibited location, or unverified facts confirmed.';
-        badge.className = 'badge badge-red';
-        badge.innerText = 'DENIED_GROUNDS';
-        scoreVal.style.color = '#ef4444';
-        riskBadge.className = 'badge badge-red';
-        riskBadge.innerText = data.advisory_score.composite_risk_level;
-      } else if (status === 'REVIEW_REQUIRED') {
-        banner.classList.add('banner-warning');
-        title.innerText = 'ELEVATED RISK / HUMAN REVIEW REQUIRED';
-        subtitle.innerText = 'Pre-enrollment unannounced site visit & secondary verification mandated.';
-        badge.className = 'badge badge-yellow';
-        badge.innerText = 'REVIEW_REQUIRED';
-        scoreVal.style.color = '#f59e0b';
-        riskBadge.className = 'badge badge-yellow';
-        riskBadge.innerText = data.advisory_score.composite_risk_level;
-      } else {
-        banner.classList.add('banner-success');
-        title.innerText = 'VERIFIED CLEAN / AUTO-APPROVE ELIGIBLE';
-        subtitle.innerText = 'Passed all Layer 1 rules cleanly. Meets all screening requirements.';
-        badge.className = 'badge badge-green';
-        badge.innerText = 'AUTO_APPROVE';
-        scoreVal.style.color = '#10b981';
-        riskBadge.className = 'badge badge-green';
-        riskBadge.innerText = data.advisory_score.composite_risk_level;
-      }
-
-      // Statutory grounds
-      const groundsBox = document.getElementById('statutory-grounds-box');
-      const groundsList = document.getElementById('statutory-list');
-      groundsList.innerHTML = '';
-      if (grounds.length > 0) {
-        groundsBox.style.display = 'block';
-        grounds.forEach(g => {
-          const li = document.createElement('li');
-          li.innerText = g;
-          groundsList.appendChild(li);
-        });
-      } else {
-        groundsBox.style.display = 'none';
-      }
-
-      // Recommended actions
-      const actionsList = document.getElementById('actions-list');
-      actionsList.innerHTML = '';
-      (data.advisory_score.recommended_review_actions || []).forEach(a => {
-        const li = document.createElement('li');
-        li.innerText = a;
-        actionsList.appendChild(li);
-      });
-
-      // Evidence list
-      const evList = document.getElementById('evidence-items-list');
-      evList.innerHTML = '';
-      (data.advisory_score.evidence_items || []).forEach(ev => {
-        const div = document.createElement('div');
-        div.className = 'evidence-item';
-        const sevClass = ev.severity === 'CRITICAL' ? 'badge-red' : (ev.severity === 'HIGH' ? 'badge-yellow' : 'badge-blue');
-        div.innerHTML = `
-          <div class="ev-header">
-            <span class="ev-code">[${ev.source_layer}] ${ev.code}</span>
-            <span class="badge ${sevClass}">${ev.severity}</span>
-          </div>
-          <div class="ev-desc">${ev.description}</div>
-        `;
-        evList.appendChild(div);
-      });
-
-      // Audit box
-      document.getElementById('audit-sha').innerText = `SHA-256 Fingerprint: ${data.audit_record.feature_vector_sha256}`;
-      document.getElementById('audit-id').innerText = `Record ID: ${data.audit_record.record_id} | Chained Hash: ${data.audit_record.audit_hash.substring(0, 24)}...`;
-    }
-
-    async function submitClaimsSurveillance(e) {
-      e.preventDefault();
-      const payload = {
-        npi: document.getElementById('clm_npi').value,
-        service_category: document.getElementById('clm_category').value,
-        months_enrolled: parseInt(document.getElementById('clm_months').value),
-        total_paid_30d: parseFloat(document.getElementById('clm_paid').value),
-        max_daily_hours: parseFloat(document.getElementById('clm_hours').value),
-        inpatient_overlaps: parseInt(document.getElementById('clm_inpatient').value),
-        post_mortem_claims: parseInt(document.getElementById('clm_deceased').value),
-        migrating_patients: parseInt(document.getElementById('clm_migrating').value)
-      };
-
-      try {
-        const res = await fetch('/api/evaluate/claims', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        });
-        const data = await res.json();
-        if (!res.ok || data.error) {
-          alert('Claims surveillance error: ' + (data.error || 'Server error ' + res.status));
-          return;
-        }
-        
-        const resDiv = document.getElementById('claims-results');
-        resDiv.style.display = 'block';
-        resDiv.innerHTML = `
-          <div class="decision-banner ${data.trigger_payment_suspension ? 'banner-danger' : 'banner-warning'}">
-            <div>
-              <div class="decision-title">${data.trigger_payment_suspension ? 'PAYMENT SUSPENSION TRIGGERED (42 CFR 455.23)' : 'ENHANCED SURVEILLANCE DESK AUDIT'}</div>
-              <div class="decision-sub">Recommended Action: ${data.recommended_cpmm_action}</div>
-            </div>
-          </div>
-          <div style="background: #0f172a; border: 1px solid var(--border); border-radius: 8px; padding: 16px;">
-            <p><strong>Total Paid (30 Days):</strong> $${data.ramp_result.total_paid_30d.toLocaleString()} (Robust Z-Score: +${data.ramp_result.robust_z_score.toFixed(1)}x above cohort normal)</p>
-            <p><strong>Impossible Daily Hours:</strong> ${data.ramp_result.impossible_hours_count} clinician-days > 24 hours</p>
-            <p><strong>Hospital Inpatient Overlaps:</strong> ${data.ramp_result.inpatient_overlap_count} claims</p>
-            <p><strong>Post-Mortem Claims:</strong> ${data.ramp_result.deceased_overlap_count} claims</p>
-            <p><strong>Unannounced Site Inspection Mandated:</strong> ${data.trigger_unannounced_site_visit ? 'YES (Immediate Dispatch)' : 'No'}</p>
-          </div>
-        `;
-      } catch (err) {
-        alert('Surveillance error: ' + err.message);
-      }
-    }
-
-    async function fetchSeeds() {
-      try {
-        const res = await fetch('/api/seeds');
-        const seeds = await res.json();
-        const container = document.getElementById('seeds-table-container');
-        let html = '<table style="width: 100%; border-collapse: collapse; font-size: 0.85rem; text-align: left;">';
-        html += '<tr style="border-bottom: 1px solid var(--border); color: var(--text-muted);"><th style="padding: 8px;">ID</th><th style="padding: 8px;">Type</th><th style="padding: 8px;">Identifier Value</th><th style="padding: 8px;">Source</th><th style="padding: 8px;">Reason</th></tr>';
-        seeds.forEach(s => {
-          html += `<tr style="border-bottom: 1px solid #1e293b;"><td style="padding: 8px; color: #60a5fa;">${s.seed_id}</td><td style="padding: 8px;">${s.identifier_type}</td><td style="padding: 8px; font-family: monospace;">${s.identifier_value}</td><td style="padding: 8px;"><span class="badge badge-red">${s.source}</span></td><td style="padding: 8px; color: var(--text-muted);">${s.reason}</td></tr>`;
-        });
-        html += '</table>';
-        container.innerHTML = html;
-      } catch (e) {
-        console.error(e);
-      }
-    }
-
-    async function fetchAuditLog() {
-      try {
-        const res = await fetch('/api/audit-trail');
-        const logs = await res.json();
-        const container = document.getElementById('audit-table-container');
-        if (!logs.length) {
-          container.innerHTML = '<p style="color: var(--text-muted);">No decisions logged in this session yet.</p>';
-          return;
-        }
-        let html = '<table style="width: 100%; border-collapse: collapse; font-size: 0.85rem; text-align: left;">';
-        html += '<tr style="border-bottom: 1px solid var(--border); color: var(--text-muted);"><th style="padding: 8px;">Record ID</th><th style="padding: 8px;">App ID</th><th style="padding: 8px;">Status</th><th style="padding: 8px;">Priority</th><th style="padding: 8px;">Timestamp (UTC)</th><th style="padding: 8px;">SHA-256 Fingerprint</th></tr>';
-        logs.forEach(l => {
-          html += `<tr style="border-bottom: 1px solid #1e293b;"><td style="padding: 8px; color: #60a5fa;">${l.record_id}</td><td style="padding: 8px;">${l.application_id}</td><td style="padding: 8px;">${l.layer1_status}</td><td style="padding: 8px;">${l.advisory_priority_score}</td><td style="padding: 8px; color: var(--text-muted);">${l.timestamp_utc}</td><td style="padding: 8px; font-family: monospace; font-size: 0.75rem;">${l.feature_vector_sha256.substring(0, 20)}...</td></tr>`;
-        });
-        html += '</table>';
-        container.innerHTML = html;
-      } catch (e) {
-        console.error(e);
-      }
-    }
-
-    // Initialize
-    loadScenarios();
   </script>
+
+  <style>
+    /* Custom scrollbar & animations */
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: #0f172a; }
+    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #475569; }
+    .pulse-dot {
+      animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: .4; }
+    }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen antialiased selection:bg-blue-600 selection:text-white">
+
+  <!-- Root mount point for React -->
+  <div id="root"></div>
+
+  <!-- React 18 JSX Application -->
+  <script type="text/babel">
+    const { useState, useEffect, useMemo, useCallback } = React;
+
+    // --- MAIN APP COMPONENT ---
+    function App() {
+      const [activeTab, setActiveTab] = useState('enrollment');
+      const [scenarios, setScenarios] = useState({});
+      const [selectedScenarioKey, setSelectedScenarioKey] = useState('');
+      const [loading, setLoading] = useState(false);
+      const [result, setResult] = useState(null);
+      const [seeds, setSeeds] = useState([]);
+      const [auditLogs, setAuditLogs] = useState([]);
+      const [copiedSha, setCopiedSha] = useState(false);
+
+      // Form state for enrollment
+      const [formData, setFormData] = useState({
+        legal_business_name: 'Sample Healthcare LLC',
+        npi: '1900000001',
+        tin: '56-1234567',
+        service_category: 'BEHAVIORAL_HEALTH',
+        formation_date: '2026-01-24',
+        application_date: '2026-02-01',
+        phone: '919-555-8822',
+        address_line1: '1204 Main St',
+        address_line2: 'PMB 402',
+        city: 'Raleigh',
+        state: 'NC',
+        zip5: '27601',
+        is_cmra: false,
+        is_po_box: false,
+        is_virtual: false,
+        is_residential: false,
+        eft_routing: '053000196',
+        eft_account: '5544332211',
+        person_name: 'Victor Vanish',
+        person_role: 'OWNER',
+        person_pct: '100',
+        ssn_last4: '4912',
+        dob: '1992-04-18',
+        device_id: 'DEV-TEST-001',
+        holding_org_id: '',
+        upstream_owner_id: '',
+        upstream_pct: '',
+        policy_text: 'Standard behavioral health compliance and clinical operating procedures manual.'
+      });
+
+      // Claims surveillance form state
+      const [claimsData, setClaimsData] = useState({
+        npi: '1900000056',
+        service_category: 'BEHAVIORAL_HEALTH',
+        months_enrolled: 3,
+        total_paid_30d: 186000,
+        max_daily_hours: 36,
+        inpatient_overlaps: 3,
+        post_mortem_claims: 2,
+        migrating_patients: 30
+      });
+      const [claimsResult, setClaimsResult] = useState(null);
+      const [claimsLoading, setClaimsLoading] = useState(false);
+
+      // Fetch pre-configured scenarios and seeds on mount
+      useEffect(() => {
+        fetch('/api/scenarios')
+          .then(res => res.json())
+          .then(data => setScenarios(data))
+          .catch(err => console.error('Error fetching scenarios:', err));
+
+        fetch('/api/seeds')
+          .then(res => res.json())
+          .then(data => setSeeds(data))
+          .catch(err => console.error('Error fetching seeds:', err));
+      }, []);
+
+      // Fetch audit logs when tab selected
+      useEffect(() => {
+        if (activeTab === 'audit') {
+          fetch('/api/audit-trail')
+            .then(res => res.json())
+            .then(data => setAuditLogs(data))
+            .catch(err => console.error('Error fetching audit:', err));
+        }
+      }, [activeTab]);
+
+      // Handle preset selection
+      const handleSelectScenario = (key) => {
+        setSelectedScenarioKey(key);
+        if (!key || !scenarios[key]) return;
+        const sc = scenarios[key];
+
+        const p = sc.disclosed_persons && sc.disclosed_persons[0] ? sc.disclosed_persons[0] : {};
+        const addr = sc.primary_address || {};
+        const eft = sc.eft_account || {};
+
+        setFormData({
+          legal_business_name: sc.legal_business_name || '',
+          npi: sc.npi || '',
+          tin: sc.tin || '',
+          service_category: sc.service_category || 'BEHAVIORAL_HEALTH',
+          formation_date: sc.formation_date || '',
+          application_date: sc.application_date || '',
+          phone: sc.phone || '',
+          address_line1: addr.address_line1 || '',
+          address_line2: addr.address_line2 || '',
+          city: addr.city || 'Raleigh',
+          state: addr.state || 'NC',
+          zip5: addr.zip5 || '27601',
+          is_cmra: !!addr.is_cmra,
+          is_po_box: !!addr.is_po_box,
+          is_virtual: !!addr.is_virtual_mailbox,
+          is_residential: (addr.rdi === 'RESIDENTIAL'),
+          eft_routing: eft.routing_number || '',
+          eft_account: eft.account_number || '',
+          person_name: p.first_name ? `${p.first_name} ${p.last_name}` : 'Victor Vanish',
+          person_role: p.role || 'OWNER',
+          person_pct: p.direct_ownership_pct !== undefined ? String(p.direct_ownership_pct * 100) : '100',
+          ssn_last4: p.ssn_last4 || '',
+          dob: p.date_of_birth || '',
+          device_id: sc.device_fingerprint_id || 'DEV-TEST-001',
+          holding_org_id: sc.holding_org_id || '',
+          upstream_owner_id: sc.upstream_owner_id || '',
+          upstream_pct: sc.upstream_pct !== undefined ? String(sc.upstream_pct) : '',
+          policy_text: sc.policy_manual_text || ''
+        });
+      };
+
+      const handleInputChange = (field, value) => {
+        setFormData(prev => ({ ...prev, [field]: value }));
+      };
+
+      const handleResetForm = () => {
+        setSelectedScenarioKey('');
+        setResult(null);
+        setFormData({
+          legal_business_name: '',
+          npi: '',
+          tin: '',
+          service_category: 'FAMILY_PRACTICE',
+          formation_date: '2026-01-01',
+          application_date: '2026-02-01',
+          phone: '',
+          address_line1: '',
+          address_line2: '',
+          city: 'Raleigh',
+          state: 'NC',
+          zip5: '27601',
+          is_cmra: false,
+          is_po_box: false,
+          is_virtual: false,
+          is_residential: false,
+          eft_routing: '',
+          eft_account: '',
+          person_name: '',
+          person_role: 'OWNER',
+          person_pct: '100',
+          ssn_last4: '',
+          dob: '',
+          device_id: 'DEV-USER-001',
+          holding_org_id: '',
+          upstream_owner_id: '',
+          upstream_pct: '',
+          policy_text: ''
+        });
+      };
+
+      // Submit screening to API
+      const handleScreening = async (e) => {
+        if (e) e.preventDefault();
+        setLoading(true);
+
+        const nameParts = (formData.person_name || '').trim().split(' ');
+        const firstName = nameParts[0] || 'Victor';
+        const lastName = nameParts.slice(1).join(' ') || 'Vanish';
+
+        const upPct = parseFloat(formData.upstream_pct);
+        const personPct = parseFloat(formData.person_pct);
+
+        const payload = {
+          legal_business_name: formData.legal_business_name || 'Sample Healthcare LLC',
+          npi: formData.npi || '1900000001',
+          tin: formData.tin || '56-1234567',
+          service_category: formData.service_category,
+          formation_date: formData.formation_date || '2026-01-01',
+          application_date: formData.application_date || '2026-02-01',
+          phone: formData.phone || '919-555-8822',
+          primary_address: {
+            address_line1: formData.address_line1 || '100 Medical Plaza',
+            address_line2: formData.address_line2 || '',
+            city: formData.city || 'Raleigh',
+            state: formData.state || 'NC',
+            zip5: formData.zip5 || '27601',
+            is_cmra: !!formData.is_cmra,
+            is_po_box: !!formData.is_po_box,
+            is_virtual_mailbox: !!formData.is_virtual,
+            is_pmb: !!formData.is_virtual,
+            rdi: formData.is_residential ? 'RESIDENTIAL' : 'COMMERCIAL'
+          },
+          eft_account: {
+            routing_number: formData.eft_routing || '053000196',
+            account_number: formData.eft_account || '1122334455'
+          },
+          disclosed_persons: [{
+            first_name: firstName,
+            last_name: lastName,
+            role: formData.person_role,
+            direct_ownership_pct: !isNaN(personPct) ? personPct / 100.0 : 1.0,
+            ssn_last4: formData.ssn_last4 || '4912',
+            date_of_birth: formData.dob || '1992-04-18'
+          }],
+          device_fingerprint_id: formData.device_id || 'DEV-TEST-001',
+          holding_org_id: formData.holding_org_id || '',
+          upstream_owner_id: formData.upstream_owner_id || '',
+          upstream_pct: !isNaN(upPct) ? upPct / 100.0 : 0.0,
+          policy_manual_text: formData.policy_text || ''
+        };
+
+        try {
+          const res = await fetch('/api/evaluate/enrollment', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+          const data = await res.json();
+          if (!res.ok || data.error) {
+            alert('Screening error: ' + (data.error || 'Server error ' + res.status));
+          } else {
+            setResult(data);
+          }
+        } catch (err) {
+          alert('Network / evaluation error: ' + err.message);
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      // Submit claims surveillance
+      const handleClaimsSubmit = async (e) => {
+        if (e) e.preventDefault();
+        setClaimsLoading(true);
+        try {
+          const res = await fetch('/api/evaluate/claims', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(claimsData)
+          });
+          const data = await res.json();
+          if (!res.ok || data.error) {
+            alert('Claims error: ' + (data.error || 'Server error ' + res.status));
+          } else {
+            setClaimsResult(data);
+          }
+        } catch (err) {
+          alert('Claims evaluation failed: ' + err.message);
+        } finally {
+          setClaimsLoading(false);
+        }
+      };
+
+      const copyToClipboard = (text) => {
+        navigator.clipboard.writeText(text);
+        setCopiedSha(true);
+        setTimeout(() => setCopiedSha(false), 2000);
+      };
+
+      return (
+        <div className="flex flex-col min-h-screen">
+
+          {/* HEADER BAR */}
+          <header className="bg-slate-900 border-b border-slate-800 sticky top-0 z-50 px-6 py-4 flex flex-wrap items-center justify-between gap-4 shadow-xl">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-lg bg-blue-600/20 border border-blue-500/40 flex items-center justify-center text-blue-400">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                  <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                </svg>
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h1 className="font-bold text-slate-100 text-base sm:text-lg tracking-tight">Medicaid Provider Fraud Intelligence</h1>
+                  <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/30">React 18</span>
+                  <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 pulse-dot"></span> ADR-0001
+                  </span>
+                </div>
+                <p className="text-xs text-slate-400">Targeting "Enroll, Bill, Vanish" (EBV) Sham Providers & Straw Nominee Rings</p>
+              </div>
+            </div>
+
+            {/* Navigation Tabs */}
+            <nav className="flex items-center gap-1 bg-slate-950/60 p-1 rounded-lg border border-slate-800">
+              <button
+                onClick={() => setActiveTab('enrollment')}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all ${activeTab === 'enrollment' ? 'bg-blue-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
+              >
+                Enrollment Screening
+              </button>
+              <button
+                onClick={() => setActiveTab('claims')}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all ${activeTab === 'claims' ? 'bg-blue-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
+              >
+                Claims Surveillance
+              </button>
+              <button
+                onClick={() => setActiveTab('seeds')}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all ${activeTab === 'seeds' ? 'bg-blue-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
+              >
+                Seed Registry
+              </button>
+              <button
+                onClick={() => setActiveTab('audit')}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all ${activeTab === 'audit' ? 'bg-blue-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
+              >
+                WORM Audit Log
+              </button>
+            </nav>
+          </header>
+
+          {/* MAIN CONTENT AREA */}
+          <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8">
+
+            {/* TAB 1: ENROLLMENT SCREENING */}
+            {activeTab === 'enrollment' && (
+              <div className="space-y-6">
+
+                {/* Demonstration Preset Bar */}
+                <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-4 flex flex-wrap items-center justify-between gap-4 shadow-lg backdrop-blur">
+                  <div className="flex items-center gap-3 flex-1 min-w-[320px]">
+                    <span className="text-xs font-bold text-slate-400 uppercase tracking-wider whitespace-nowrap">Load Pre-Configured Test Case:</span>
+                    <select
+                      value={selectedScenarioKey}
+                      onChange={(e) => handleSelectScenario(e.target.value)}
+                      className="bg-slate-950 border border-slate-700 text-slate-200 text-xs rounded-lg px-3 py-2 flex-1 outline-none focus:border-blue-500 font-medium"
+                    >
+                      <option value="">-- Select a Real-World Scenario to Populate Form --</option>
+                      <option value="control">Control: Triangle Pediatrics PLLC (Legitimate Established 2012)</option>
+                      <option value="scenario1">Scenario 1: Apex Autism LLC (Formed 8d Ago + Mailbox Store CMRA)</option>
+                      <option value="scenario2">Scenario 2: Horizon Community Recovery (Straw Owner + 48% Excluded Felon)</option>
+                      <option value="scenario3">Scenario 3: Beacon Southern Healthcare (Phoenix Re-Entry with Terminated EFT)</option>
+                      <option value="scenario4">Scenario 4: Serenity Community Living (Cloned Policy Manual Ring)</option>
+                    </select>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={handleResetForm}
+                      className="px-3 py-2 text-xs font-semibold rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition"
+                    >
+                      Reset Form
+                    </button>
+                  </div>
+                </div>
+
+                {/* Grid: Left = Form, Right = Assessment Card */}
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+
+                  {/* FORM COLUMN (5 Cols on large screen) */}
+                  <div className="lg:col-span-6 bg-slate-900/80 border border-slate-800 rounded-2xl p-6 shadow-xl backdrop-blur space-y-5">
+                    <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+                      <div>
+                        <h2 className="text-base font-bold text-slate-100 flex items-center gap-2">
+                          <svg className="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                            <path d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                          </svg>
+                          Provider Application Form
+                        </h2>
+                        <p className="text-xs text-slate-400">Captures disclosures required by 42 CFR Part 455</p>
+                      </div>
+                      <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-slate-800 text-slate-400">Checkpoint 1</span>
+                    </div>
+
+                    <form id="enrollment-form" onSubmit={handleScreening} className="space-y-4 text-xs">
+
+                      {/* Basic Org Info */}
+                      <div className="space-y-1">
+                        <label className="font-semibold text-slate-300">Legal Business Name</label>
+                        <input
+                          type="text"
+                          value={formData.legal_business_name}
+                          onChange={(e) => handleInputChange('legal_business_name', e.target.value)}
+                          placeholder="e.g. Triangle Behavioral Health LLC"
+                          className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 outline-none focus:border-blue-500"
+                          required
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                          <label className="font-semibold text-slate-300">NPI Number (10 Digits)</label>
+                          <input
+                            type="text"
+                            value={formData.npi}
+                            onChange={(e) => handleInputChange('npi', e.target.value)}
+                            placeholder="e.g. 1900000046"
+                            className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 outline-none focus:border-blue-500 font-mono"
+                            required
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="font-semibold text-slate-300">Tax ID (TIN / EIN)</label>
+                          <input
+                            type="text"
+                            value={formData.tin}
+                            onChange={(e) => handleInputChange('tin', e.target.value)}
+                            placeholder="56-XXXXXXX"
+                            className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 outline-none focus:border-blue-500 font-mono"
+                            required
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                          <label className="font-semibold text-slate-300">Service Category</label>
+                          <select
+                            value={formData.service_category}
+                            onChange={(e) => handleInputChange('service_category', e.target.value)}
+                            className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-2 text-slate-100 outline-none focus:border-blue-500"
+                          >
+                            <option value="PEDIATRIC_CLINIC">Pediatric Clinic (Limited Risk)</option>
+                            <option value="FAMILY_PRACTICE">Family Practice (Limited Risk)</option>
+                            <option value="COMMUNITY_HEALTH_FQHC">Community Health FQHC (Limited)</option>
+                            <option value="BEHAVIORAL_HEALTH">Behavioral Health / SUD (Moderate)</option>
+                            <option value="AUTISM_CLINIC_FACILITY">Autism ABA Clinic (Moderate)</option>
+                            <option value="SOBER_LIVING_FACILITY">Sober Living Facility (Moderate)</option>
+                            <option value="ADULT_DAY_CARE">Adult Day Care (Moderate)</option>
+                            <option value="HCBS">HCBS Personal Care (High Risk)</option>
+                            <option value="HOSPICE">Hospice (High Risk)</option>
+                          </select>
+                        </div>
+                        <div className="space-y-1">
+                          <label className="font-semibold text-slate-300">SoS Formation Date</label>
+                          <input
+                            type="date"
+                            value={formData.formation_date}
+                            onChange={(e) => handleInputChange('formation_date', e.target.value)}
+                            className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 outline-none focus:border-blue-500"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Practice Address & Melissa Flags */}
+                      <div className="bg-slate-950/60 p-3.5 rounded-xl border border-slate-800 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-slate-200">Practice Location & Address Hygiene</span>
+                          <span className="text-[10px] text-blue-400 font-semibold uppercase">DATA-039 Check</span>
+                        </div>
+                        <div className="grid grid-cols-3 gap-2">
+                          <div className="col-span-2 space-y-1">
+                            <label className="text-slate-400">Street Address Line 1</label>
+                            <input
+                              type="text"
+                              value={formData.address_line1}
+                              onChange={(e) => handleInputChange('address_line1', e.target.value)}
+                              placeholder="1204 Main St"
+                              className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-100 outline-none"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-slate-400">Suite / PMB #</label>
+                            <input
+                              type="text"
+                              value={formData.address_line2}
+                              onChange={(e) => handleInputChange('address_line2', e.target.value)}
+                              placeholder="PMB 402"
+                              className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-100 outline-none"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-3 gap-2">
+                          <input
+                            type="text"
+                            value={formData.city}
+                            onChange={(e) => handleInputChange('city', e.target.value)}
+                            placeholder="City"
+                            className="bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-100 outline-none"
+                          />
+                          <input
+                            type="text"
+                            value={formData.state}
+                            onChange={(e) => handleInputChange('state', e.target.value)}
+                            placeholder="State"
+                            className="bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-100 outline-none"
+                          />
+                          <input
+                            type="text"
+                            value={formData.zip5}
+                            onChange={(e) => handleInputChange('zip5', e.target.value)}
+                            placeholder="Zip"
+                            className="bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-100 outline-none font-mono"
+                          />
+                        </div>
+
+                        {/* Melissa Checkboxes */}
+                        <div className="flex flex-wrap gap-3 pt-1">
+                          <label className="flex items-center gap-1.5 text-slate-300 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={formData.is_cmra}
+                              onChange={(e) => handleInputChange('is_cmra', e.target.checked)}
+                              className="rounded bg-slate-900 border-slate-700 text-blue-600 focus:ring-0"
+                            />
+                            CMRA (Mailbox Store)
+                          </label>
+                          <label className="flex items-center gap-1.5 text-slate-300 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={formData.is_po_box}
+                              onChange={(e) => handleInputChange('is_po_box', e.target.checked)}
+                              className="rounded bg-slate-900 border-slate-700 text-blue-600 focus:ring-0"
+                            />
+                            PO Box
+                          </label>
+                          <label className="flex items-center gap-1.5 text-slate-300 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={formData.is_virtual}
+                              onChange={(e) => handleInputChange('is_virtual', e.target.checked)}
+                              className="rounded bg-slate-900 border-slate-700 text-blue-600 focus:ring-0"
+                            />
+                            Virtual Mailbox / PMB
+                          </label>
+                          <label className="flex items-center gap-1.5 text-slate-300 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={formData.is_residential}
+                              onChange={(e) => handleInputChange('is_residential', e.target.checked)}
+                              className="rounded bg-slate-900 border-slate-700 text-blue-600 focus:ring-0"
+                            />
+                            Residential Delivery (RDI)
+                          </label>
+                        </div>
+                      </div>
+
+                      {/* EFT Banking Info */}
+                      <div className="bg-slate-950/60 p-3.5 rounded-xl border border-slate-800 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-slate-200">Electronic Funds Transfer (EFT) Banking</span>
+                          <span className="text-[10px] text-amber-400 font-semibold uppercase">Shared Bank Re-Entry Check</span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <label className="text-slate-400">Routing Number</label>
+                            <input
+                              type="text"
+                              value={formData.eft_routing}
+                              onChange={(e) => handleInputChange('eft_routing', e.target.value)}
+                              className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-100 outline-none font-mono"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-slate-400">Account Number</label>
+                            <input
+                              type="text"
+                              value={formData.eft_account}
+                              onChange={(e) => handleInputChange('eft_account', e.target.value)}
+                              className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-100 outline-none font-mono"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Ownership Disclosures & GR-4 Corporate Structure */}
+                      <div className="bg-slate-950/60 p-3.5 rounded-xl border border-slate-800 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-slate-200">Ownership & Corporate Hierarchy</span>
+                          <span className="text-[10px] text-indigo-400 font-semibold uppercase">GR-4 Indirect Traversal</span>
+                        </div>
+
+                        <div className="grid grid-cols-3 gap-2">
+                          <div className="col-span-2 space-y-1">
+                            <label className="text-slate-400">Disclosed Direct Owner Name</label>
+                            <input
+                              type="text"
+                              value={formData.person_name}
+                              onChange={(e) => handleInputChange('person_name', e.target.value)}
+                              placeholder="e.g. Victor Vanish"
+                              className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-100 outline-none"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-slate-400">Direct Equity %</label>
+                            <input
+                              type="number"
+                              value={formData.person_pct}
+                              onChange={(e) => handleInputChange('person_pct', e.target.value)}
+                              className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-100 outline-none"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2">
+                          <div className="space-y-1">
+                            <label className="text-slate-400">Owner SSN Last 4</label>
+                            <input
+                              type="text"
+                              value={formData.ssn_last4}
+                              onChange={(e) => handleInputChange('ssn_last4', e.target.value)}
+                              maxLength="4"
+                              className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-100 outline-none font-mono"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-slate-400">Date of Birth</label>
+                            <input
+                              type="date"
+                              value={formData.dob}
+                              onChange={(e) => handleInputChange('dob', e.target.value)}
+                              className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-100 outline-none"
+                            />
+                          </div>
+                        </div>
+
+                        {/* Optional GR-4 upstream fields */}
+                        <div className="pt-2 border-t border-slate-800 space-y-1">
+                          <label className="text-slate-400">Upstream Parent Holding Entity & Ultimate Owner (GR-4)</label>
+                          <div className="grid grid-cols-3 gap-2">
+                            <input
+                              type="text"
+                              placeholder="Parent Holding Co ID"
+                              value={formData.holding_org_id}
+                              onChange={(e) => handleInputChange('holding_org_id', e.target.value)}
+                              className="bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-slate-100 outline-none font-mono text-[11px]"
+                            />
+                            <input
+                              type="text"
+                              placeholder="Upstream Owner ID / Seed"
+                              value={formData.upstream_owner_id}
+                              onChange={(e) => handleInputChange('upstream_owner_id', e.target.value)}
+                              className="bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-slate-100 outline-none font-mono text-[11px]"
+                            />
+                            <input
+                              type="number"
+                              placeholder="Upstream %"
+                              value={formData.upstream_pct}
+                              onChange={(e) => handleInputChange('upstream_pct', e.target.value)}
+                              className="bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-slate-100 outline-none font-mono text-[11px]"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Policy Manual Narrative for MinHash */}
+                      <div className="space-y-1">
+                        <label className="font-semibold text-slate-300">Compliance & Clinical Operating Manual (MinHash Template Check)</label>
+                        <textarea
+                          rows="3"
+                          value={formData.policy_text}
+                          onChange={(e) => handleInputChange('policy_text', e.target.value)}
+                          placeholder="Paste policy and procedure manual narrative..."
+                          className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-slate-200 outline-none focus:border-blue-500 font-mono text-[11px]"
+                        ></textarea>
+                      </div>
+
+                      {/* Action Buttons */}
+                      <div className="pt-3 flex items-center gap-3">
+                        <button
+                          type="submit"
+                          disabled={loading}
+                          className="flex-1 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-bold py-2.5 px-4 rounded-xl shadow-lg transition flex items-center justify-center gap-2"
+                        >
+                          {loading ? (
+                            <>
+                              <svg className="animate-spin w-4 h-4 text-white" fill="none" viewBox="0 0 24 24">
+                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+                              </svg>
+                              Running Multi-Layer Inference...
+                            </>
+                          ) : (
+                            <>
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+                                <path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+                              </svg>
+                              Run Fraud & Risk Screening
+                            </>
+                          )}
+                        </button>
+                      </div>
+
+                    </form>
+                  </div>
+
+                  {/* ASSESSMENT & DECISION RESULTS COLUMN (6 Cols) */}
+                  <div className="lg:col-span-6 space-y-6">
+
+                    {!result && !loading && (
+                      <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-12 text-center flex flex-col items-center justify-center space-y-3 min-h-[480px]">
+                        <div className="w-14 h-14 rounded-2xl bg-slate-800/60 border border-slate-700/60 flex items-center justify-center text-slate-400">
+                          <svg className="w-7 h-7" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
+                            <path d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                          </svg>
+                        </div>
+                        <h3 className="font-bold text-slate-200 text-base">Real-Time Evaluation Results</h3>
+                        <p className="text-xs text-slate-400 max-w-sm">
+                          Select a pre-configured scenario from the top bar or fill the application form, then click <strong>Run Fraud & Risk Screening</strong> to see full statutory findings and graph analytics.
+                        </p>
+                      </div>
+                    )}
+
+                    {loading && (
+                      <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-12 text-center flex flex-col items-center justify-center space-y-4 min-h-[480px]">
+                        <div className="w-12 h-12 rounded-full border-4 border-blue-500 border-t-transparent animate-spin"></div>
+                        <p className="text-sm font-semibold text-slate-300">Traversing Relationship Graph & Running Fellegi-Sunter M1...</p>
+                        <p className="text-xs text-slate-500">Checking DATA-039 prohibitions, seed lists, and GR-4 indirect ownership...</p>
+                      </div>
+                    )}
+
+                    {result && !loading && (
+                      <div className="space-y-4 animate-in fade-in duration-300">
+
+                        {/* DECISION STATUS HERO BANNER */}
+                        <div className={`p-5 rounded-2xl border shadow-xl flex items-start justify-between gap-4 ${
+                          result.layer1_decision.status === 'DENIED_GROUNDS'
+                            ? 'bg-red-500/10 border-red-500/40 text-red-200'
+                            : result.layer1_decision.status === 'REVIEW_REQUIRED'
+                            ? 'bg-amber-500/10 border-amber-500/40 text-amber-200'
+                            : 'bg-emerald-500/10 border-emerald-500/40 text-emerald-200'
+                        }`}>
+                          <div className="space-y-1">
+                            <span className="text-[10px] uppercase font-bold tracking-widest px-2.5 py-0.5 rounded-full inline-block mb-1 border ${
+                              result.layer1_decision.status === 'DENIED_GROUNDS'
+                                ? 'bg-red-500/20 text-red-300 border-red-500/30'
+                                : result.layer1_decision.status === 'REVIEW_REQUIRED'
+                                ? 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                                : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                            }">
+                              {result.layer1_decision.status}
+                            </span>
+                            <h3 className="font-extrabold text-lg sm:text-xl tracking-tight leading-tight">
+                              {result.layer1_decision.status === 'DENIED_GROUNDS' && 'FRAUD / STATUTORY DENIAL GROUNDS'}
+                              {result.layer1_decision.status === 'REVIEW_REQUIRED' && 'ELEVATED RISK / HUMAN REVIEW REQUIRED'}
+                              {result.layer1_decision.status === 'AUTO_APPROVE_ELIGIBLE' && 'VERIFIED CLEAN / AUTO-APPROVE ELIGIBLE'}
+                            </h3>
+                            <p className="text-xs opacity-90">{result.advisory_score.explanation_summary}</p>
+                          </div>
+                          <div className="text-right whitespace-nowrap">
+                            <div className="text-2xl sm:text-3xl font-black font-mono">
+                              {result.advisory_score.priority_score.toFixed(1)}
+                            </div>
+                            <span className="text-[10px] uppercase font-semibold text-slate-400">Queue Priority</span>
+                          </div>
+                        </div>
+
+                        {/* METRICS & ACA CATEGORICAL TIER */}
+                        <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 grid grid-cols-3 gap-3 text-center">
+                          <div className="space-y-0.5">
+                            <span className="text-[10px] text-slate-400 uppercase font-semibold">ACA Risk Tier</span>
+                            <div className="font-bold text-xs sm:text-sm text-blue-400">{result.layer1_decision.assigned_aca_risk_tier}</div>
+                            <span className="text-[10px] text-slate-500">42 CFR 455.450</span>
+                          </div>
+                          <div className="space-y-0.5 border-x border-slate-800">
+                            <span className="text-[10px] text-slate-400 uppercase font-semibold">Composite Risk</span>
+                            <div className={`font-bold text-xs sm:text-sm ${
+                              result.advisory_score.composite_risk_level === 'CRITICAL' ? 'text-red-400' :
+                              result.advisory_score.composite_risk_level === 'HIGH' ? 'text-amber-400' : 'text-emerald-400'
+                            }`}>
+                              {result.advisory_score.composite_risk_level}
+                            </div>
+                            <span className="text-[10px] text-slate-500">Assistive Layer 2</span>
+                          </div>
+                          <div className="space-y-0.5">
+                            <span className="text-[10px] text-slate-400 uppercase font-semibold">Auto-Approve</span>
+                            <div className={`font-bold text-xs sm:text-sm ${result.layer1_decision.can_auto_approve ? 'text-emerald-400' : 'text-red-400'}`}>
+                              {result.layer1_decision.can_auto_approve ? 'ELIGIBLE' : 'PROHIBITED'}
+                            </div>
+                            <span className="text-[10px] text-slate-500">ADR-0001 Gate</span>
+                          </div>
+                        </div>
+
+                        {/* STATUTORY GROUNDS (IF PRESENT) */}
+                        {result.layer1_decision.statutory_grounds && result.layer1_decision.statutory_grounds.length > 0 && (
+                          <div className="bg-red-950/40 border border-red-800/40 rounded-xl p-4 space-y-1.5">
+                            <div className="flex items-center gap-2 text-red-400 text-xs font-bold uppercase tracking-wider">
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                                <path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+                              </svg>
+                              Statutory Denial Grounds (42 CFR 455.416):
+                            </div>
+                            <ul className="list-disc list-inside text-xs text-red-200/90 space-y-1">
+                              {result.layer1_decision.statutory_grounds.map((g, i) => (
+                                <li key={i}>{g}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+
+                        {/* RECOMMENDED REVIEW ACTIONS */}
+                        {result.advisory_score.recommended_review_actions && result.advisory_score.recommended_review_actions.length > 0 && (
+                          <div className="bg-blue-950/30 border border-blue-800/40 rounded-xl p-4 space-y-1.5">
+                            <div className="text-blue-400 text-xs font-bold uppercase tracking-wider flex items-center gap-1.5">
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                                <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
+                              </svg>
+                              Recommended Reviewer Protocols:
+                            </div>
+                            <ul className="list-disc list-inside text-xs text-blue-200/90 space-y-1 font-medium">
+                              {result.advisory_score.recommended_review_actions.map((act, i) => (
+                                <li key={i}>{act}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+
+                        {/* GR-4 INDIRECT OWNERSHIP TREE */}
+                        {result.indirect_ownership && result.indirect_ownership.length > 0 && (
+                          <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-2">
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs font-bold text-slate-200 uppercase tracking-wide">GR-4 Indirect Corporate Tracing (42 CFR 455.104)</span>
+                              <span className="text-[10px] text-indigo-400 font-semibold font-mono">Threshold &gt;= 5.0%</span>
+                            </div>
+                            <div className="space-y-1.5">
+                              {result.indirect_ownership.map((ind, i) => (
+                                <div key={i} className="flex items-center justify-between bg-slate-950 p-2.5 rounded-lg border border-slate-800 text-xs">
+                                  <div>
+                                    <span className="font-mono text-slate-300 font-bold">{ind.upstream_entity_id}</span>
+                                    {ind.is_upstream_excluded_seed && (
+                                      <span className="ml-2 px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-500/20 text-red-400 border border-red-500/40">
+                                        EXCLUDED SEED
+                                      </span>
+                                    )}
+                                    {ind.seed_reason && <div className="text-[10px] text-red-400/80 mt-0.5">{ind.seed_reason}</div>}
+                                  </div>
+                                  <div className="text-right">
+                                    <span className="font-bold font-mono text-slate-100">{(ind.effective_indirect_pct * 100).toFixed(1)}%</span>
+                                    <div className="text-[10px] text-slate-500">Effective Equity</div>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* SURFACED EXPLAINABLE EVIDENCE ITEMS */}
+                        <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-3">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-bold text-slate-200 uppercase tracking-wide">Surfaced Explainable Evidence Items ({result.advisory_score.evidence_items.length})</span>
+                            <span className="text-[10px] text-slate-500">NIST AI RMF Compliant</span>
+                          </div>
+                          <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+                            {result.advisory_score.evidence_items.map((ev, i) => (
+                              <div key={i} className="bg-slate-950 p-3 rounded-lg border border-slate-800 text-xs space-y-1">
+                                <div className="flex items-center justify-between">
+                                  <span className="font-mono text-[11px] font-bold text-blue-400">[{ev.source_layer}] {ev.code}</span>
+                                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                                    ev.severity === 'CRITICAL' ? 'bg-red-500/20 text-red-400 border border-red-500/30' :
+                                    ev.severity === 'HIGH' ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' :
+                                    'bg-blue-500/20 text-blue-400 border border-blue-500/30'
+                                  }`}>
+                                    {ev.severity}
+                                  </span>
+                                </div>
+                                <p className="text-slate-300 text-xs leading-relaxed">{ev.description}</p>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* WORM CRYPTOGRAPHIC AUDIT BOX */}
+                        <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-3.5 text-[11px] font-mono space-y-1.5 text-slate-400">
+                          <div className="flex items-center justify-between text-slate-300 font-bold uppercase tracking-wider text-[10px]">
+                            <span>WORM Audit Trail Verification</span>
+                            <button
+                              onClick={() => copyToClipboard(result.audit_record.feature_vector_sha256)}
+                              className="text-blue-400 hover:text-blue-300 transition text-[10px] font-sans"
+                            >
+                              {copiedSha ? '✓ Copied' : 'Copy SHA-256'}
+                            </button>
+                          </div>
+                          <div className="truncate text-slate-300">
+                            SHA-256: <span className="text-blue-400">{result.audit_record.feature_vector_sha256}</span>
+                          </div>
+                          <div className="flex items-center justify-between text-[10px]">
+                            <span>Record ID: {result.audit_record.record_id}</span>
+                            <span>Chained Hash: {result.audit_record.audit_hash.substring(0, 24)}...</span>
+                          </div>
+                        </div>
+
+                      </div>
+                    )}
+
+                  </div>
+
+                </div>
+
+              </div>
+            )}
+
+            {/* TAB 2: CLAIMS SURVEILLANCE */}
+            {activeTab === 'claims' && (
+              <div className="max-w-4xl mx-auto space-y-6">
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 sm:p-8 shadow-xl space-y-6">
+                  <div>
+                    <h2 className="text-lg font-bold text-slate-100 flex items-center gap-2">
+                      <svg className="w-5 h-5 text-amber-400" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                        <path d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"/>
+                      </svg>
+                      Checkpoint 2: Early Billing Claims Surveillance Simulator
+                    </h2>
+                    <p className="text-xs text-slate-400 mt-1">
+                      Monitors providers during the first 6-12 months of billing to catch explosive ramps, impossible clinician hours (&gt;24h/day), hospital inpatient overlaps, and kickback patient migrations.
+                    </p>
+                  </div>
+
+                  <form onSubmit={handleClaimsSubmit} className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+                    <div className="space-y-1">
+                      <label className="font-semibold text-slate-300">Billing Provider NPI</label>
+                      <input
+                        type="text"
+                        value={claimsData.npi}
+                        onChange={(e) => setClaimsData({ ...claimsData, npi: e.target.value })}
+                        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 font-mono outline-none"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="font-semibold text-slate-300">Service Category</label>
+                      <select
+                        value={claimsData.service_category}
+                        onChange={(e) => setClaimsData({ ...claimsData, service_category: e.target.value })}
+                        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 outline-none"
+                      >
+                        <option value="BEHAVIORAL_HEALTH">Behavioral Health / SUD</option>
+                        <option value="SOBER_LIVING_FACILITY">Sober Living Facility</option>
+                        <option value="AUTISM_CLINIC_FACILITY">Autism ABA Clinic</option>
+                        <option value="HCBS">HCBS Personal Care</option>
+                      </select>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="font-semibold text-slate-300">Months Enrolled</label>
+                      <input
+                        type="number"
+                        min="1"
+                        max="12"
+                        value={claimsData.months_enrolled}
+                        onChange={(e) => setClaimsData({ ...claimsData, months_enrolled: parseInt(e.target.value) || 1 })}
+                        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 outline-none"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="font-semibold text-slate-300">Total 30-Day Paid Volume ($)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={claimsData.total_paid_30d}
+                        onChange={(e) => setClaimsData({ ...claimsData, total_paid_30d: parseFloat(e.target.value) || 0 })}
+                        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 outline-none font-mono"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="font-semibold text-slate-300">Max Daily Clinician Hours Billed</label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={claimsData.max_daily_hours}
+                        onChange={(e) => setClaimsData({ ...claimsData, max_daily_hours: parseFloat(e.target.value) || 0 })}
+                        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 outline-none"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="font-semibold text-slate-300">Inpatient Hospital Overlap Claims</label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={claimsData.inpatient_overlaps}
+                        onChange={(e) => setClaimsData({ ...claimsData, inpatient_overlaps: parseInt(e.target.value) || 0 })}
+                        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 outline-none"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="font-semibold text-slate-300">Post-Mortem Claims</label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={claimsData.post_mortem_claims}
+                        onChange={(e) => setClaimsData({ ...claimsData, post_mortem_claims: parseInt(e.target.value) || 0 })}
+                        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 outline-none"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="font-semibold text-slate-300">Migrating Patients (from Suspended Provider)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={claimsData.migrating_patients}
+                        onChange={(e) => setClaimsData({ ...claimsData, migrating_patients: parseInt(e.target.value) || 0 })}
+                        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 outline-none"
+                      />
+                    </div>
+
+                    <div className="sm:col-span-2 pt-2">
+                      <button
+                        type="submit"
+                        disabled={claimsLoading}
+                        className="w-full bg-amber-600 hover:bg-amber-500 font-bold text-white py-2.5 rounded-xl transition text-xs flex items-center justify-center gap-2"
+                      >
+                        {claimsLoading ? 'Evaluating Claims Network...' : 'Evaluate Claims Surveillance'}
+                      </button>
+                    </div>
+                  </form>
+
+                  {/* Claims Output */}
+                  {claimsResult && (
+                    <div className="space-y-4 pt-4 border-t border-slate-800 animate-in fade-in">
+                      <div className={`p-4 rounded-xl border flex items-center justify-between ${
+                        claimsResult.trigger_payment_suspension
+                          ? 'bg-red-500/10 border-red-500/40 text-red-200'
+                          : 'bg-amber-500/10 border-amber-500/40 text-amber-200'
+                      }`}>
+                        <div>
+                          <div className="font-bold text-sm">
+                            {claimsResult.trigger_payment_suspension ? 'PAYMENT SUSPENSION TRIGGERED (42 CFR 455.23)' : 'ENHANCED OVERSIGHT DESK AUDIT'}
+                          </div>
+                          <div className="text-xs opacity-90">{claimsResult.recommended_cpmm_action}</div>
+                        </div>
+                        <span className={`text-[10px] font-bold px-2.5 py-1 rounded-full uppercase ${
+                          claimsResult.trigger_payment_suspension ? 'bg-red-500/20 text-red-300' : 'bg-amber-500/20 text-amber-300'
+                        }`}>
+                          {claimsResult.trigger_payment_suspension ? 'CAF HOLD' : 'AUDIT'}
+                        </span>
+                      </div>
+
+                      <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 text-xs grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
+                        <div>
+                          <span className="text-slate-400 text-[10px] uppercase font-semibold">Total Paid</span>
+                          <div className="font-bold font-mono text-sm text-slate-100">${claimsResult.ramp_result.total_paid_30d.toLocaleString()}</div>
+                        </div>
+                        <div>
+                          <span className="text-slate-400 text-[10px] uppercase font-semibold">Robust Z-Score</span>
+                          <div className="font-bold font-mono text-sm text-amber-400">+{claimsResult.ramp_result.robust_z_score.toFixed(1)}x</div>
+                        </div>
+                        <div>
+                          <span className="text-slate-400 text-[10px] uppercase font-semibold">Impossible Daily Hrs</span>
+                          <div className="font-bold font-mono text-sm text-red-400">{claimsResult.ramp_result.impossible_hours_count}</div>
+                        </div>
+                        <div>
+                          <span className="text-slate-400 text-[10px] uppercase font-semibold">Site Visit Mandated</span>
+                          <div className="font-bold text-sm text-blue-400">{claimsResult.trigger_unannounced_site_visit ? 'YES' : 'NO'}</div>
+                        </div>
+                      </div>
+
+                      {/* Claims Evidence Items */}
+                      <div className="space-y-2">
+                        {claimsResult.evidence_items.map((ev, i) => (
+                          <div key={i} className="bg-slate-950 p-3 rounded-lg border border-slate-800 text-xs">
+                            <span className="font-mono font-bold text-red-400">[{ev.severity}] {ev.code}</span>
+                            <p className="text-slate-300 mt-1">{ev.description}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                </div>
+              </div>
+            )}
+
+            {/* TAB 3: SEED REGISTRY */}
+            {activeTab === 'seeds' && (
+              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h2 className="text-base font-bold text-slate-100">Known-Bad Seed Database (LEIE, SAM, State Terminations)</h2>
+                    <p className="text-xs text-slate-400">Matched in real-time across Layer 1 rules, graph CTEs, and Personalized PageRank.</p>
+                  </div>
+                  <span className="text-xs font-semibold px-2.5 py-1 rounded bg-slate-800 text-slate-300">{seeds.length} Active Seeds</span>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead>
+                      <tr className="border-b border-slate-800 text-slate-400">
+                        <th className="py-2.5 px-3">Seed ID</th>
+                        <th className="py-2.5 px-3">Type</th>
+                        <th className="py-2.5 px-3">Identifier Value</th>
+                        <th className="py-2.5 px-3">Source</th>
+                        <th className="py-2.5 px-3">Sanction Reason</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/60 font-mono">
+                      {seeds.map((s, i) => (
+                        <tr key={i} className="hover:bg-slate-800/30 transition">
+                          <td className="py-2.5 px-3 text-blue-400 font-bold">{s.seed_id}</td>
+                          <td className="py-2.5 px-3">{s.identifier_type}</td>
+                          <td className="py-2.5 px-3 text-slate-200 font-bold">{s.identifier_value}</td>
+                          <td className="py-2.5 px-3">
+                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-red-500/20 text-red-400 border border-red-500/30">
+                              {s.source}
+                            </span>
+                          </td>
+                          <td className="py-2.5 px-3 font-sans text-slate-400">{s.reason}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* TAB 4: AUDIT EXPLORER */}
+            {activeTab === 'audit' && (
+              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h2 className="text-base font-bold text-slate-100">Immutable WORM Audit Trail Explorer</h2>
+                    <p className="text-xs text-slate-400">Cryptographically chained SHA-256 decision records complying with NC RFP Attachment C Section 5.</p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      fetch('/api/audit-trail').then(r => r.json()).then(d => setAuditLogs(d));
+                    }}
+                    className="text-xs text-blue-400 hover:text-blue-300 font-semibold"
+                  >
+                    Refresh Logs
+                  </button>
+                </div>
+
+                {auditLogs.length === 0 ? (
+                  <p className="text-xs text-slate-500 py-8 text-center">No decisions logged in this session yet.</p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs border-collapse">
+                      <thead>
+                        <tr className="border-b border-slate-800 text-slate-400">
+                          <th className="py-2.5 px-3">Record ID</th>
+                          <th className="py-2.5 px-3">App ID</th>
+                          <th className="py-2.5 px-3">Layer 1 Status</th>
+                          <th className="py-2.5 px-3">Priority</th>
+                          <th className="py-2.5 px-3">Timestamp (UTC)</th>
+                          <th className="py-2.5 px-3">SHA-256 Fingerprint</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-800/60 font-mono text-[11px]">
+                        {auditLogs.map((l, i) => (
+                          <tr key={i} className="hover:bg-slate-800/30 transition">
+                            <td className="py-2 px-3 text-blue-400 font-bold">{l.record_id}</td>
+                            <td className="py-2 px-3">{l.application_id}</td>
+                            <td className="py-2 px-3">
+                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                l.layer1_status === 'DENIED_GROUNDS' ? 'text-red-400 bg-red-500/20' :
+                                l.layer1_status === 'REVIEW_REQUIRED' ? 'text-amber-400 bg-amber-500/20' :
+                                'text-emerald-400 bg-emerald-500/20'
+                              }`}>
+                                {l.layer1_status}
+                              </span>
+                            </td>
+                            <td className="py-2 px-3 font-bold text-slate-200">{l.advisory_priority_score}</td>
+                            <td className="py-2 px-3 text-slate-400">{l.timestamp_utc}</td>
+                            <td className="py-2 px-3 text-slate-500 truncate max-w-[200px]">{l.feature_vector_sha256}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+
+          </main>
+
+          {/* FOOTER */}
+          <footer className="border-t border-slate-900 bg-slate-950 py-4 px-6 text-center text-xs text-slate-500">
+            Medicaid Provider Fraud Intelligence &bull; ADR-0001 Architecture &bull; 42 CFR 455 &bull; NC RFP Attachment C Section 3 Compliant
+          </footer>
+
+        </div>
+      );
+    }
+
+    // Render React 18 application into #root
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+
 </body>
 </html>
-
