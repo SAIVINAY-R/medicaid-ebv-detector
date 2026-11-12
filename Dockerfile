@@ -21,3 +21,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
 
 # Start the Medicaid Fraud Intelligence web service
 CMD ["python3", "serve.py"]
+
