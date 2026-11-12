@@ -44,3 +44,4 @@
 | **Fee-For-Service (FFS) Claims** | State MMIS (NCTracks / ND MMIS) | Daily / Weekly | Azure Event Hub / SFTP | NPI, Rendering NPI, Beneficiary ID, Date, Procedure, Paid Amount, Units | Billing ramps (robust z-score), impossible clinician hours (>24h/day) |
 | **Inpatient Hospital Stays** | MMIS Institutional Inpatient Encounters | Daily | Azure Synapse / SQL View | Beneficiary ID, Admission Date, Discharge Date | CP2 Inpatient Overlap (billing community care while admitted) |
 | **EVV Visit Telemetry** | State EVV Aggregator (Personal Care / Home Health) | Daily Batch | REST API / JSON | Caregiver NPI, Beneficiary ID, Geolocation, Check-in/out Timestamps | Ghost visits, impossible travel, overlapping visits |
+

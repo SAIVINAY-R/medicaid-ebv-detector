@@ -87,3 +87,4 @@ class NearMatchQueue:
     def is_confirmed_link(self, id_a: str, id_b: str) -> bool:
         """Check if two entities have been confirmed as linked by a human reviewer."""
         return self._confirmed_links.get(id_a) == id_b
+

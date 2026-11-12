@@ -128,3 +128,4 @@ class SystemConfig:
     # System metadata
     model_version: str = "v1.0.0-phase0"
     wORM_audit_enabled: bool = True
+

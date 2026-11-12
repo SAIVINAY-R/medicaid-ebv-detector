@@ -51,3 +51,4 @@ class GraphEdge:
     ownership_percentage: float = 0.0 # Used for GR-4 indirect ownership calculation
     effective_start: str = "2020-01-01"
     effective_end: Optional[str] = None
+

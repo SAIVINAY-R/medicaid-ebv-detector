@@ -4,3 +4,4 @@ from .application import ApplicationVelocityTracker
 from .template import MinHashTemplateDetector
 
 __all__ = ["ApplicationVelocityTracker", "MinHashTemplateDetector"]
+

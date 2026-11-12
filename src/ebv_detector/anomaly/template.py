@@ -107,3 +107,4 @@ class MinHashTemplateDetector:
         self._app_names[app.application_id] = app.legal_business_name
 
         return evidence
+

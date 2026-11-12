@@ -51,3 +51,4 @@ class SupernodeManager:
         if self.is_supernode(source_id) or self.is_supernode(target_id):
             return base_weight * self.damping_factor
         return base_weight
+

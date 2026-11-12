@@ -1,0 +1,965 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Medicaid Provider Fraud Intelligence — EBV Detector</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card-bg: #1e293b;
+      --border: #334155;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --primary: #3b82f6;
+      --primary-hover: #2563eb;
+      --danger: #ef4444;
+      --danger-bg: rgba(239, 68, 68, 0.15);
+      --warning: #f59e0b;
+      --warning-bg: rgba(245, 158, 11, 0.15);
+      --success: #10b981;
+      --success-bg: rgba(16, 185, 129, 0.15);
+      --info: #06b6d4;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background-color: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+      padding-bottom: 60px;
+    }
+    header {
+      background: #111827;
+      border-bottom: 1px solid var(--border);
+      padding: 16px 28px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .brand h1 {
+      font-size: 1.15rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+    .badge {
+      font-size: 0.75rem;
+      padding: 3px 8px;
+      border-radius: 9999px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .badge-blue { background: rgba(59, 130, 246, 0.2); color: #60a5fa; border: 1px solid #3b82f6; }
+    .badge-green { background: var(--success-bg); color: #34d399; border: 1px solid #10b981; }
+    .badge-red { background: var(--danger-bg); color: #f87171; border: 1px solid #ef4444; }
+    .badge-yellow { background: var(--warning-bg); color: #fbbf24; border: 1px solid #f59e0b; }
+
+    .nav-tabs {
+      display: flex;
+      gap: 8px;
+    }
+    .tab-btn {
+      background: transparent;
+      border: 1px solid transparent;
+      color: var(--text-muted);
+      padding: 6px 14px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.85rem;
+      font-weight: 500;
+      transition: all 0.15s ease;
+    }
+    .tab-btn:hover { color: var(--text); background: var(--card-bg); }
+    .tab-btn.active { color: #fff; background: var(--card-bg); border-color: var(--border); }
+
+    .container {
+      max-width: 1400px;
+      margin: 24px auto;
+      padding: 0 20px;
+    }
+
+    .preset-bar {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px 20px;
+      margin-bottom: 24px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    .preset-bar label {
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    select, input, textarea {
+      background: #0f172a;
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 0.9rem;
+      outline: none;
+      transition: border 0.15s ease;
+    }
+    select:focus, input:focus, textarea:focus { border-color: var(--primary); }
+
+    .main-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+    }
+    @media (max-width: 1024px) {
+      .main-grid { grid-template-columns: 1fr; }
+    }
+
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 24px;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.2);
+    }
+    .card h2 {
+      font-size: 1.1rem;
+      font-weight: 700;
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 14px;
+    }
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .form-group.full { grid-column: span 2; }
+    label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--text-muted);
+    }
+    .checkbox-group {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      padding: 8px 0;
+    }
+    .checkbox-label {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.85rem;
+      color: var(--text);
+      cursor: pointer;
+    }
+
+    .btn {
+      background: var(--primary);
+      color: #fff;
+      border: none;
+      padding: 10px 18px;
+      border-radius: 6px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      transition: background 0.15s;
+    }
+    .btn:hover { background: var(--primary-hover); }
+    .btn-secondary {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+    }
+    .btn-secondary:hover { background: #334155; color: #fff; }
+
+    /* Results styling */
+    .decision-banner {
+      border-radius: 8px;
+      padding: 18px 20px;
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+    .banner-danger { background: var(--danger-bg); border: 1px solid var(--danger); color: #fca5a5; }
+    .banner-warning { background: var(--warning-bg); border: 1px solid var(--warning); color: #fde68a; }
+    .banner-success { background: var(--success-bg); border: 1px solid var(--success); color: #a7f3d0; }
+
+    .decision-title {
+      font-size: 1.15rem;
+      font-weight: 800;
+      letter-spacing: -0.01em;
+    }
+    .decision-sub {
+      font-size: 0.85rem;
+      opacity: 0.9;
+    }
+
+    .score-meter {
+      background: #0f172a;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px 18px;
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .score-val {
+      font-size: 1.75rem;
+      font-weight: 800;
+    }
+
+    .evidence-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-top: 14px;
+    }
+    .evidence-item {
+      background: #0f172a;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 12px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .ev-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .ev-code {
+      font-family: monospace;
+      font-size: 0.8rem;
+      font-weight: 700;
+      color: #93c5fd;
+    }
+    .ev-desc {
+      font-size: 0.85rem;
+      color: var(--text);
+    }
+
+    .audit-box {
+      font-family: monospace;
+      font-size: 0.75rem;
+      background: #090d16;
+      padding: 12px;
+      border-radius: 6px;
+      color: var(--text-muted);
+      word-break: break-all;
+      margin-top: 14px;
+      border: 1px solid #1e293b;
+    }
+
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="brand">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+      </svg>
+      <h1>Medicaid Provider Fraud Intelligence</h1>
+      <span class="badge badge-blue">ADR-0001 Compliant</span>
+    </div>
+    <div class="nav-tabs">
+      <button class="tab-btn active" onclick="switchTab('enrollment')">Enrollment Screening</button>
+      <button class="tab-btn" onclick="switchTab('claims')">Claims Surveillance</button>
+      <button class="tab-btn" onclick="switchTab('seeds')">Seed Registry</button>
+      <button class="tab-btn" onclick="switchTab('audit')">WORM Audit Log</button>
+    </div>
+  </header>
+
+  <div class="container">
+
+    <!-- TAB 1: ENROLLMENT SCREENING -->
+    <div id="tab-enrollment" class="tab-content active">
+
+      <!-- Preset Bar -->
+      <div class="preset-bar">
+        <label>Load Demonstration Scenario:</label>
+        <select id="scenario-selector" onchange="loadSelectedScenario()" style="min-width: 380px;">
+          <option value="">-- Choose a Pre-Configured Test Case --</option>
+          <option value="control">Control: Triangle Pediatrics PLLC (Legitimate Established 2012)</option>
+          <option value="scenario1">Scenario 1: Apex Autism LLC (Formed 8d Ago + Mailbox Store CMRA)</option>
+          <option value="scenario2">Scenario 2: Horizon Community Recovery (Straw Owner + 48% Excluded Felon)</option>
+          <option value="scenario3">Scenario 3: Beacon Southern Healthcare (Phoenix Re-Entry with Terminated EFT)</option>
+          <option value="scenario4">Scenario 4: Serenity Community Living (Cloned Policy Manual Ring)</option>
+        </select>
+        <button class="btn btn-secondary" onclick="resetForm()">Reset Form</button>
+      </div>
+
+      <div class="main-grid">
+
+        <!-- Application Form Column -->
+        <div class="card">
+          <h2>
+            <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+            </svg>
+            Provider Enrollment Application (CPMM)
+          </h2>
+
+          <form id="enrollment-form" onsubmit="submitEnrollment(event)">
+
+            <div class="form-grid">
+              <div class="form-group full">
+                <label>Legal Business Name</label>
+                <input type="text" id="legal_business_name" required placeholder="e.g. Triangle Health Partners LLC">
+              </div>
+
+              <div class="form-group">
+                <label>National Provider Identifier (NPI)</label>
+                <input type="text" id="npi" required placeholder="10-digit NPI" value="1900000001">
+              </div>
+
+              <div class="form-group">
+                <label>Federal Tax ID (TIN / EIN)</label>
+                <input type="text" id="tin" required placeholder="XX-XXXXXXX" value="56-1234567">
+              </div>
+
+              <div class="form-group">
+                <label>Service Category</label>
+                <select id="service_category">
+                  <option value="PEDIATRIC_CLINIC">Pediatric Clinic (Limited Risk)</option>
+                  <option value="FAMILY_PRACTICE">Family Practice (Limited Risk)</option>
+                  <option value="COMMUNITY_HEALTH_FQHC">FQHC Health Center (Limited Risk)</option>
+                  <option value="BEHAVIORAL_HEALTH">Behavioral Health / SUD (Moderate Risk)</option>
+                  <option value="AUTISM_CLINIC_FACILITY">Autism ABA Clinic (Moderate Risk)</option>
+                  <option value="SOBER_LIVING_FACILITY">Sober Living Facility (Moderate Risk)</option>
+                  <option value="ADULT_DAY_CARE">Adult Day Care (Moderate Risk)</option>
+                  <option value="HCBS">Home & Community Based Services (High Risk)</option>
+                  <option value="HOSPICE">Hospice (High Risk)</option>
+                </select>
+              </div>
+
+              <div class="form-group">
+                <label>Secretary of State Formation Date</label>
+                <input type="date" id="formation_date" value="2026-01-24">
+              </div>
+
+              <div class="form-group">
+                <label>Application Submission Date</label>
+                <input type="date" id="application_date" value="2026-02-01">
+              </div>
+
+              <div class="form-group">
+                <label>Telephone</label>
+                <input type="text" id="phone" value="919-555-8822">
+              </div>
+
+              <!-- Address Section -->
+              <div class="form-group full">
+                <label>Practice Location Address</label>
+                <input type="text" id="address_line1" required placeholder="Street address" value="1204 Main St">
+              </div>
+
+              <div class="form-group">
+                <label>Suite / PMB</label>
+                <input type="text" id="address_line2" placeholder="Suite or PMB #" value="PMB 402">
+              </div>
+
+              <div class="form-group">
+                <label>City, State, Zip</label>
+                <div style="display: flex; gap: 6px;">
+                  <input type="text" id="city" value="Raleigh" style="flex: 2;">
+                  <input type="text" id="state" value="NC" style="flex: 1;">
+                  <input type="text" id="zip5" value="27601" style="flex: 1;">
+                </div>
+              </div>
+
+              <div class="form-group full">
+                <label>Address Hygiene Flags (Melissa / USPS Attributes)</label>
+                <div class="checkbox-group">
+                  <label class="checkbox-label"><input type="checkbox" id="is_cmra"> CMRA (Mailbox Store)</label>
+                  <label class="checkbox-label"><input type="checkbox" id="is_po_box"> PO Box</label>
+                  <label class="checkbox-label"><input type="checkbox" id="is_virtual"> Virtual Mailbox / PMB</label>
+                  <label class="checkbox-label"><input type="checkbox" id="is_residential"> Residential (RDI)</label>
+                </div>
+              </div>
+
+              <!-- EFT Banking -->
+              <div class="form-group">
+                <label>EFT Bank Routing Number</label>
+                <input type="text" id="eft_routing" value="053000196">
+              </div>
+
+              <div class="form-group">
+                <label>EFT Bank Account Number</label>
+                <input type="text" id="eft_account" value="5544332211">
+              </div>
+
+              <!-- Disclosed Personnel -->
+              <div class="form-group">
+                <label>Disclosed Owner / Officer Name</label>
+                <input type="text" id="person_name" value="Victor Vanish">
+              </div>
+
+              <div class="form-group">
+                <label>Owner Role & Direct Equity %</label>
+                <div style="display: flex; gap: 6px;">
+                  <select id="person_role" style="flex: 2;">
+                    <option value="OWNER">Owner (Direct)</option>
+                    <option value="MANAGING_EMPLOYEE">Managing Employee</option>
+                    <option value="AUTHORIZED_OFFICIAL">Authorized Official</option>
+                  </select>
+                  <input type="number" id="person_pct" value="100" min="0" max="100" style="flex: 1;" placeholder="%">
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label>Owner SSN Last 4 & Date of Birth</label>
+                <div style="display: flex; gap: 6px;">
+                  <input type="text" id="ssn_last4" value="4912" maxlength="4" style="flex: 1;" placeholder="SSN Last 4">
+                  <input type="date" id="dob" value="1992-04-18" style="flex: 2;">
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label>Device Fingerprint ID</label>
+                <input type="text" id="device_id" value="DEV-TEST-001">
+              </div>
+
+              <!-- Upstream Corporate Holding (GR-4) -->
+              <div class="form-group full">
+                <label>Upstream Holding Company (Optional - For GR-4 Indirect Ownership)</label>
+                <div style="display: flex; gap: 6px;">
+                  <input type="text" id="holding_org_id" placeholder="Parent Holding Org ID" style="flex: 2;">
+                  <input type="text" id="upstream_owner_id" placeholder="Ultimate Owner ID / Seed" style="flex: 2;">
+                  <input type="number" id="upstream_pct" placeholder="Pct %" min="0" max="100" style="flex: 1;">
+                </div>
+              </div>
+
+              <!-- Policy Manual / Narratives -->
+              <div class="form-group full">
+                <label>Policy Manual / Compliance Narrative (MinHash Template Check)</label>
+                <textarea id="policy_text" rows="3" placeholder="Enter clinical documentation or policy manual text...">Standard behavioral health compliance and clinical operating procedures manual.</textarea>
+              </div>
+
+            </div>
+
+            <div style="margin-top: 20px; display: flex; gap: 12px;">
+              <button type="submit" class="btn">
+                <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                  <path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+                </svg>
+                Run Fraud & Risk Screening
+              </button>
+              <button type="button" class="btn btn-secondary" onclick="resetForm()">Clear</button>
+            </div>
+
+          </form>
+        </div>
+
+        <!-- Evaluation Results Column -->
+        <div class="card">
+          <h2>
+            <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/>
+            </svg>
+            Automated Screening Assessment
+          </h2>
+
+          <div id="results-placeholder" style="padding: 60px 20px; text-align: center; color: var(--text-muted);">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="margin: 0 auto 12px; display: block; opacity: 0.5;">
+              <path d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+            </svg>
+            Enter provider application details or select a demonstration scenario above, then click <strong>Run Fraud & Risk Screening</strong> to see the real-time decision analysis.
+          </div>
+
+          <div id="results-container" style="display: none;">
+
+            <!-- Decision Banner -->
+            <div id="decision-banner" class="decision-banner">
+              <div>
+                <div id="decision-title" class="decision-title">FRAUD / STATUTORY DENIAL GROUNDS</div>
+                <div id="decision-subtitle" class="decision-sub">42 CFR 455.416 mandatory denial grounds triggered.</div>
+              </div>
+              <span id="decision-badge" class="badge badge-red">DENIED_GROUNDS</span>
+            </div>
+
+            <!-- Score Meter -->
+            <div class="score-meter">
+              <div>
+                <div style="font-size: 0.8rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase;">
+                  Advisory Queue Priority
+                </div>
+                <div style="font-size: 0.85rem; color: #94a3b8;" id="assigned-aca-tier">
+                  ACA Categorical Tier: HIGH
+                </div>
+              </div>
+              <div style="text-align: right;">
+                <div id="priority-score-val" class="score-val" style="color: #ef4444;">94.0</div>
+                <div id="risk-level-badge" class="badge badge-red">CRITICAL RISK</div>
+              </div>
+            </div>
+
+            <!-- Statutory Citations -->
+            <div id="statutory-grounds-box" style="margin-bottom: 18px; display: none;">
+              <label style="color: #f87171;">STATUTORY GROUNDS (42 CFR 455.416):</label>
+              <ul id="statutory-list" style="margin-left: 20px; font-size: 0.85rem; color: #fca5a5; margin-top: 4px;"></ul>
+            </div>
+
+            <!-- Recommended Actions -->
+            <div id="actions-box" style="margin-bottom: 18px;">
+              <label style="color: #60a5fa;">RECOMMENDED ACTIONS:</label>
+              <ul id="actions-list" style="margin-left: 20px; font-size: 0.85rem; color: #93c5fd; margin-top: 4px;"></ul>
+            </div>
+
+            <!-- Evidence Items -->
+            <div>
+              <label>SURFACED EXPLAINABLE EVIDENCE:</label>
+              <div id="evidence-items-list" class="evidence-list"></div>
+            </div>
+
+            <!-- Audit Trail -->
+            <div class="audit-box">
+              <strong>WORM AUDIT VERIFICATION:</strong><br>
+              <span id="audit-sha">SHA-256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855</span><br>
+              <span id="audit-id">Record ID: AUDIT-000001 | Status: Signed</span>
+            </div>
+
+          </div>
+
+        </div>
+
+      </div>
+
+    </div>
+
+    <!-- TAB 2: MMIS CLAIMS SURVEILLANCE -->
+    <div id="tab-claims" class="tab-content">
+      <div class="card" style="max-width: 900px; margin: 0 auto;">
+        <h2>Checkpoint 2: MMIS Early Billing Surveillance Simulator</h2>
+        <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 20px;">
+          Monitors enrolled providers during their first 6-12 months of billing to catch zero-to-millions ramps, impossible clinician hours, hospital inpatient overlaps, and kickback patient cohort migration.
+        </p>
+
+        <form id="claims-form" onsubmit="submitClaimsSurveillance(event)">
+          <div class="form-grid">
+            <div class="form-group">
+              <label>Billing Provider NPI</label>
+              <input type="text" id="clm_npi" value="1900000056">
+            </div>
+            <div class="form-group">
+              <label>Service Category</label>
+              <select id="clm_category">
+                <option value="BEHAVIORAL_HEALTH">Behavioral Health / SUD</option>
+                <option value="SOBER_LIVING_FACILITY">Sober Living Facility</option>
+                <option value="AUTISM_CLINIC_FACILITY">Autism ABA Clinic</option>
+                <option value="HCBS">HCBS Personal Care</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Months Since Enrollment</label>
+              <input type="number" id="clm_months" value="3" min="1" max="12">
+            </div>
+            <div class="form-group">
+              <label>Total 30-Day Paid Amount ($)</label>
+              <input type="number" id="clm_paid" value="186000" min="0">
+            </div>
+            <div class="form-group">
+              <label>Max Hours Billed in 24h by Single Clinician</label>
+              <input type="number" id="clm_hours" value="36" min="1" max="100">
+            </div>
+            <div class="form-group">
+              <label>Hospital Inpatient Overlap Claims</label>
+              <input type="number" id="clm_inpatient" value="3" min="0">
+            </div>
+            <div class="form-group">
+              <label>Post-Mortem Claims (After Date of Death)</label>
+              <input type="number" id="clm_deceased" value="2" min="0">
+            </div>
+            <div class="form-group">
+              <label>Patients Migrating from Suspended Provider</label>
+              <input type="number" id="clm_migrating" value="30" min="0">
+            </div>
+          </div>
+
+          <div style="margin-top: 20px;">
+            <button type="submit" class="btn">Evaluate Claims Surveillance</button>
+          </div>
+        </form>
+
+        <div id="claims-results" style="margin-top: 24px; display: none;"></div>
+      </div>
+    </div>
+
+    <!-- TAB 3: SEED REGISTRY -->
+    <div id="tab-seeds" class="tab-content">
+      <div class="card">
+        <h2>Active Known-Bad Seed Database (LEIE, SAM, State Terminations)</h2>
+        <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 16px;">
+          These primary-source exclusion and sanction feeds are matched in real-time across Layer 1 rules, M3 graph traversal, and Personalized PageRank propagation.
+        </p>
+        <div id="seeds-table-container">Loading active seeds...</div>
+      </div>
+    </div>
+
+    <!-- TAB 4: AUDIT LOG -->
+    <div id="tab-audit" class="tab-content">
+      <div class="card">
+        <h2>Immutable WORM Audit Trail Explorer</h2>
+        <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 16px;">
+          Cryptographically chained SHA-256 decision records ensuring non-repudiation and auditability under NC RFP Attachment C Section 5.
+        </p>
+        <div id="audit-table-container">Loading audit trail...</div>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    let activeScenarios = {};
+
+    function switchTab(tabId) {
+      document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+      
+      const targetBtn = Array.from(document.querySelectorAll('.tab-btn')).find(b => b.getAttribute('onclick').includes(tabId));
+      if (targetBtn) targetBtn.classList.add('active');
+      
+      const targetContent = document.getElementById(`tab-${tabId}`);
+      if (targetContent) targetContent.classList.add('active');
+
+      if (tabId === 'seeds') fetchSeeds();
+      if (tabId === 'audit') fetchAuditLog();
+    }
+
+    // Load pre-configured scenarios from API
+    async function loadScenarios() {
+      try {
+        const res = await fetch('/api/scenarios');
+        activeScenarios = await res.json();
+      } catch (e) {
+        console.error('Failed to load scenarios', e);
+      }
+    }
+
+    function loadSelectedScenario() {
+      const key = document.getElementById('scenario-selector').value;
+      if (!key || !activeScenarios[key]) return;
+
+      const sc = activeScenarios[key];
+      document.getElementById('legal_business_name').value = sc.legal_business_name || '';
+      document.getElementById('npi').value = sc.npi || '';
+      document.getElementById('tin').value = sc.tin || '';
+      document.getElementById('service_category').value = sc.service_category || 'BEHAVIORAL_HEALTH';
+      document.getElementById('formation_date').value = sc.formation_date || '';
+      document.getElementById('application_date').value = sc.application_date || '';
+      document.getElementById('phone').value = sc.phone || '';
+
+      if (sc.primary_address) {
+        document.getElementById('address_line1').value = sc.primary_address.address_line1 || '';
+        document.getElementById('address_line2').value = sc.primary_address.address_line2 || '';
+        document.getElementById('city').value = sc.primary_address.city || 'Raleigh';
+        document.getElementById('state').value = sc.primary_address.state || 'NC';
+        document.getElementById('zip5').value = sc.primary_address.zip5 || '27601';
+        document.getElementById('is_cmra').checked = !!sc.primary_address.is_cmra;
+        document.getElementById('is_po_box').checked = !!sc.primary_address.is_po_box;
+        document.getElementById('is_virtual').checked = !!sc.primary_address.is_virtual_mailbox;
+        document.getElementById('is_residential').checked = (sc.primary_address.rdi === 'RESIDENTIAL');
+      }
+
+      if (sc.eft_account) {
+        document.getElementById('eft_routing').value = sc.eft_account.routing_number || '';
+        document.getElementById('eft_account').value = sc.eft_account.account_number || '';
+      }
+
+      if (sc.disclosed_persons && sc.disclosed_persons[0]) {
+        const p = sc.disclosed_persons[0];
+        document.getElementById('person_name').value = `${p.first_name} ${p.last_name}`;
+        document.getElementById('person_role').value = p.role || 'OWNER';
+        document.getElementById('person_pct').value = (p.direct_ownership_pct * 100) || 100;
+        document.getElementById('ssn_last4').value = p.ssn_last4 || '';
+        document.getElementById('dob').value = p.date_of_birth || '';
+      }
+
+      document.getElementById('device_id').value = sc.device_fingerprint_id || 'DEV-TEST-001';
+      document.getElementById('holding_org_id').value = sc.holding_org_id || '';
+      document.getElementById('upstream_owner_id').value = sc.upstream_owner_id || '';
+      document.getElementById('upstream_pct').value = sc.upstream_pct || '';
+      document.getElementById('policy_text').value = sc.policy_manual_text || '';
+
+      // Auto submit on scenario select
+      submitEnrollment(new Event('submit'));
+    }
+
+    function resetForm() {
+      document.getElementById('enrollment-form').reset();
+      document.getElementById('scenario-selector').value = '';
+      document.getElementById('results-placeholder').style.display = 'block';
+      document.getElementById('results-container').style.display = 'none';
+    }
+
+    async function submitEnrollment(e) {
+      if (e) e.preventDefault();
+
+      const nameParts = document.getElementById('person_name').value.trim().split(' ');
+      const firstName = nameParts[0] || 'Victor';
+      const lastName = nameParts.slice(1).join(' ') || 'Vanish';
+
+      const payload = {
+        legal_business_name: document.getElementById('legal_business_name').value,
+        npi: document.getElementById('npi').value,
+        tin: document.getElementById('tin').value,
+        service_category: document.getElementById('service_category').value,
+        formation_date: document.getElementById('formation_date').value,
+        application_date: document.getElementById('application_date').value,
+        phone: document.getElementById('phone').value,
+        primary_address: {
+          address_line1: document.getElementById('address_line1').value,
+          address_line2: document.getElementById('address_line2').value,
+          city: document.getElementById('city').value,
+          state: document.getElementById('state').value,
+          zip5: document.getElementById('zip5').value,
+          is_cmra: document.getElementById('is_cmra').checked,
+          is_po_box: document.getElementById('is_po_box').checked,
+          is_virtual_mailbox: document.getElementById('is_virtual').checked,
+          is_pmb: document.getElementById('is_virtual').checked,
+          rdi: document.getElementById('is_residential').checked ? 'RESIDENTIAL' : 'COMMERCIAL'
+        },
+        eft_account: {
+          routing_number: document.getElementById('eft_routing').value,
+          account_number: document.getElementById('eft_account').value
+        },
+        disclosed_persons: [{
+          first_name: firstName,
+          last_name: lastName,
+          role: document.getElementById('person_role').value,
+          direct_ownership_pct: parseFloat(document.getElementById('person_pct').value || 100) / 100,
+          ssn_last4: document.getElementById('ssn_last4').value,
+          date_of_birth: document.getElementById('dob').value
+        }],
+        device_fingerprint_id: document.getElementById('device_id').value,
+        holding_org_id: document.getElementById('holding_org_id').value,
+        upstream_owner_id: document.getElementById('upstream_owner_id').value,
+        upstream_pct: parseFloat(document.getElementById('upstream_pct').value || 0) / 100,
+        policy_manual_text: document.getElementById('policy_text').value
+      };
+
+      try {
+        const res = await fetch('/api/evaluate/enrollment', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        renderResults(data);
+      } catch (err) {
+        alert('Evaluation failed: ' + err.message);
+      }
+    }
+
+    function renderResults(data) {
+      document.getElementById('results-placeholder').style.display = 'none';
+      const container = document.getElementById('results-container');
+      container.style.display = 'block';
+
+      const banner = document.getElementById('decision-banner');
+      const title = document.getElementById('decision-title');
+      const subtitle = document.getElementById('decision-subtitle');
+      const badge = document.getElementById('decision-badge');
+      const scoreVal = document.getElementById('priority-score-val');
+      const riskBadge = document.getElementById('risk-level-badge');
+      const acaTier = document.getElementById('assigned-aca-tier');
+
+      const status = data.layer1_decision.status;
+      const grounds = data.layer1_decision.statutory_grounds || [];
+
+      acaTier.innerText = `ACA Categorical Risk Tier: ${data.layer1_decision.assigned_aca_risk_tier} (42 CFR 455.450)`;
+      scoreVal.innerText = data.advisory_score.priority_score.toFixed(1);
+
+      // Status styles
+      banner.className = 'decision-banner';
+      if (status === 'DENIED_GROUNDS') {
+        banner.classList.add('banner-danger');
+        title.innerText = 'FRAUD / MANDATORY DENIAL GROUNDS DETECTED';
+        subtitle.innerText = 'Statutory exclusion, prohibited location, or unverified facts confirmed.';
+        badge.className = 'badge badge-red';
+        badge.innerText = 'DENIED_GROUNDS';
+        scoreVal.style.color = '#ef4444';
+        riskBadge.className = 'badge badge-red';
+        riskBadge.innerText = data.advisory_score.composite_risk_level;
+      } else if (status === 'REVIEW_REQUIRED') {
+        banner.classList.add('banner-warning');
+        title.innerText = 'ELEVATED RISK / HUMAN REVIEW REQUIRED';
+        subtitle.innerText = 'Pre-enrollment unannounced site visit & secondary verification mandated.';
+        badge.className = 'badge badge-yellow';
+        badge.innerText = 'REVIEW_REQUIRED';
+        scoreVal.style.color = '#f59e0b';
+        riskBadge.className = 'badge badge-yellow';
+        riskBadge.innerText = data.advisory_score.composite_risk_level;
+      } else {
+        banner.classList.add('banner-success');
+        title.innerText = 'VERIFIED CLEAN / AUTO-APPROVE ELIGIBLE';
+        subtitle.innerText = 'Passed all Layer 1 rules cleanly. Meets all screening requirements.';
+        badge.className = 'badge badge-green';
+        badge.innerText = 'AUTO_APPROVE';
+        scoreVal.style.color = '#10b981';
+        riskBadge.className = 'badge badge-green';
+        riskBadge.innerText = data.advisory_score.composite_risk_level;
+      }
+
+      // Statutory grounds
+      const groundsBox = document.getElementById('statutory-grounds-box');
+      const groundsList = document.getElementById('statutory-list');
+      groundsList.innerHTML = '';
+      if (grounds.length > 0) {
+        groundsBox.style.display = 'block';
+        grounds.forEach(g => {
+          const li = document.createElement('li');
+          li.innerText = g;
+          groundsList.appendChild(li);
+        });
+      } else {
+        groundsBox.style.display = 'none';
+      }
+
+      // Recommended actions
+      const actionsList = document.getElementById('actions-list');
+      actionsList.innerHTML = '';
+      (data.advisory_score.recommended_review_actions || []).forEach(a => {
+        const li = document.createElement('li');
+        li.innerText = a;
+        actionsList.appendChild(li);
+      });
+
+      // Evidence list
+      const evList = document.getElementById('evidence-items-list');
+      evList.innerHTML = '';
+      (data.advisory_score.evidence_items || []).forEach(ev => {
+        const div = document.createElement('div');
+        div.className = 'evidence-item';
+        const sevClass = ev.severity === 'CRITICAL' ? 'badge-red' : (ev.severity === 'HIGH' ? 'badge-yellow' : 'badge-blue');
+        div.innerHTML = `
+          <div class="ev-header">
+            <span class="ev-code">[${ev.source_layer}] ${ev.code}</span>
+            <span class="badge ${sevClass}">${ev.severity}</span>
+          </div>
+          <div class="ev-desc">${ev.description}</div>
+        `;
+        evList.appendChild(div);
+      });
+
+      // Audit box
+      document.getElementById('audit-sha').innerText = `SHA-256 Fingerprint: ${data.audit_record.feature_vector_sha256}`;
+      document.getElementById('audit-id').innerText = `Record ID: ${data.audit_record.record_id} | Chained Hash: ${data.audit_record.audit_hash.substring(0, 24)}...`;
+    }
+
+    async function submitClaimsSurveillance(e) {
+      e.preventDefault();
+      const payload = {
+        npi: document.getElementById('clm_npi').value,
+        service_category: document.getElementById('clm_category').value,
+        months_enrolled: parseInt(document.getElementById('clm_months').value),
+        total_paid_30d: parseFloat(document.getElementById('clm_paid').value),
+        max_daily_hours: parseFloat(document.getElementById('clm_hours').value),
+        inpatient_overlaps: parseInt(document.getElementById('clm_inpatient').value),
+        post_mortem_claims: parseInt(document.getElementById('clm_deceased').value),
+        migrating_patients: parseInt(document.getElementById('clm_migrating').value)
+      };
+
+      try {
+        const res = await fetch('/api/evaluate/claims', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        
+        const resDiv = document.getElementById('claims-results');
+        resDiv.style.display = 'block';
+        resDiv.innerHTML = `
+          <div class="decision-banner ${data.trigger_payment_suspension ? 'banner-danger' : 'banner-warning'}">
+            <div>
+              <div class="decision-title">${data.trigger_payment_suspension ? 'PAYMENT SUSPENSION TRIGGERED (42 CFR 455.23)' : 'ENHANCED SURVEILLANCE DESK AUDIT'}</div>
+              <div class="decision-sub">Recommended Action: ${data.recommended_cpmm_action}</div>
+            </div>
+          </div>
+          <div style="background: #0f172a; border: 1px solid var(--border); border-radius: 8px; padding: 16px;">
+            <p><strong>Total Paid (30 Days):</strong> $${data.ramp_result.total_paid_30d.toLocaleString()} (Robust Z-Score: +${data.ramp_result.robust_z_score.toFixed(1)}x above cohort normal)</p>
+            <p><strong>Impossible Daily Hours:</strong> ${data.ramp_result.impossible_hours_count} clinician-days > 24 hours</p>
+            <p><strong>Hospital Inpatient Overlaps:</strong> ${data.ramp_result.inpatient_overlap_count} claims</p>
+            <p><strong>Post-Mortem Claims:</strong> ${data.ramp_result.deceased_overlap_count} claims</p>
+            <p><strong>Unannounced Site Inspection Mandated:</strong> ${data.trigger_unannounced_site_visit ? 'YES (Immediate Dispatch)' : 'No'}</p>
+          </div>
+        `;
+      } catch (err) {
+        alert('Surveillance error: ' + err.message);
+      }
+    }
+
+    async function fetchSeeds() {
+      try {
+        const res = await fetch('/api/seeds');
+        const seeds = await res.json();
+        const container = document.getElementById('seeds-table-container');
+        let html = '<table style="width: 100%; border-collapse: collapse; font-size: 0.85rem; text-align: left;">';
+        html += '<tr style="border-bottom: 1px solid var(--border); color: var(--text-muted);"><th style="padding: 8px;">ID</th><th style="padding: 8px;">Type</th><th style="padding: 8px;">Identifier Value</th><th style="padding: 8px;">Source</th><th style="padding: 8px;">Reason</th></tr>';
+        seeds.forEach(s => {
+          html += `<tr style="border-bottom: 1px solid #1e293b;"><td style="padding: 8px; color: #60a5fa;">${s.seed_id}</td><td style="padding: 8px;">${s.identifier_type}</td><td style="padding: 8px; font-family: monospace;">${s.identifier_value}</td><td style="padding: 8px;"><span class="badge badge-red">${s.source}</span></td><td style="padding: 8px; color: var(--text-muted);">${s.reason}</td></tr>`;
+        });
+        html += '</table>';
+        container.innerHTML = html;
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    async function fetchAuditLog() {
+      try {
+        const res = await fetch('/api/audit-trail');
+        const logs = await res.json();
+        const container = document.getElementById('audit-table-container');
+        if (!logs.length) {
+          container.innerHTML = '<p style="color: var(--text-muted);">No decisions logged in this session yet.</p>';
+          return;
+        }
+        let html = '<table style="width: 100%; border-collapse: collapse; font-size: 0.85rem; text-align: left;">';
+        html += '<tr style="border-bottom: 1px solid var(--border); color: var(--text-muted);"><th style="padding: 8px;">Record ID</th><th style="padding: 8px;">App ID</th><th style="padding: 8px;">Status</th><th style="padding: 8px;">Priority</th><th style="padding: 8px;">Timestamp (UTC)</th><th style="padding: 8px;">SHA-256 Fingerprint</th></tr>';
+        logs.forEach(l => {
+          html += `<tr style="border-bottom: 1px solid #1e293b;"><td style="padding: 8px; color: #60a5fa;">${l.record_id}</td><td style="padding: 8px;">${l.application_id}</td><td style="padding: 8px;">${l.layer1_status}</td><td style="padding: 8px;">${l.advisory_priority_score}</td><td style="padding: 8px; color: var(--text-muted);">${l.timestamp_utc}</td><td style="padding: 8px; font-family: monospace; font-size: 0.75rem;">${l.feature_vector_sha256.substring(0, 20)}...</td></tr>`;
+        });
+        html += '</table>';
+        container.innerHTML = html;
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    // Initialize
+    loadScenarios();
+  </script>
+</body>
+</html>
+

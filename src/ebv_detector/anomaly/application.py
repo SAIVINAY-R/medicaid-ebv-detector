@@ -100,3 +100,4 @@ class ApplicationVelocityTracker:
             self._email_history[app.email.lower()].append((app.application_id, app_date))
 
         return evidence
+

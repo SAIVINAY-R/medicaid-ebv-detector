@@ -114,3 +114,4 @@ class SeedRiskPropagator:
         # Typical non-seed values are between 1e-4 and 0.2
         scaled = min(1.0, max(0.0, (math.log10(raw_val + 1e-8) + 5.0) / 5.0))
         return round(scaled, 4)
+

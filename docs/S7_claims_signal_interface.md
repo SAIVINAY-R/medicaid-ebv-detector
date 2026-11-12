@@ -101,3 +101,4 @@ flowchart LR
 2. **High Signal (Ramp Velocity Anomaly alone, robust z > 3.5)**:
    - Automated dispatch of unannounced site inspection to verify clinic operating capacity.
    - Off-cycle revalidation notice issued under 42 CFR 455.414.
+

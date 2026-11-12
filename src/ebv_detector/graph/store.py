@@ -170,3 +170,4 @@ class GraphStore:
 
     def close(self):
         self.conn.close()
+

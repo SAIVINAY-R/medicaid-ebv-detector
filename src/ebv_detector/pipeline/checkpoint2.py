@@ -97,3 +97,4 @@ class Checkpoint2Pipeline:
             trigger_unannounced_site_visit=trigger_site_visit,
             trigger_payment_suspension=trigger_suspension
         )
+

@@ -183,3 +183,4 @@ class ClaimRecord:
     service_hours: float
     inpatient_overlap: bool = False   # True if beneficiary was an inpatient in hospital
     beneficiary_deceased: bool = False # True if service date is post-mortem
+

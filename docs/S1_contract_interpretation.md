@@ -67,3 +67,4 @@ This memorandum establishes the formal architectural and engineering boundaries 
 2. **Audit & Replay**:
    - Every inference produces a SHA-256 fingerprint of the input feature vector (`featureVectorSha256`), logged to an immutable WORM (Write Once, Read Many) audit log.
    - Reviewer overrides require mandatory justification comments and are cryptographically chained to maintain an untampered audit log.
+

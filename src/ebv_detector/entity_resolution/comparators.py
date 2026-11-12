@@ -251,3 +251,4 @@ def double_metaphone(name: str) -> Tuple[str, str]:
         idx += 1
 
     return ("".join(primary)[:4], "".join(secondary)[:4])
+

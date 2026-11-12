@@ -117,3 +117,4 @@ class AuditRecord:
     reviewer_action: Optional[str] = None # "APPROVED", "DENIED", "REFERRED", "VOIDED"
     reviewer_notes: Optional[str] = None
     audit_hash: str = ""              # Chained SHA-256 hash of this record
+

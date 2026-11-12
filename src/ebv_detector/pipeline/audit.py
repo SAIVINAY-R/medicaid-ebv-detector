@@ -95,3 +95,4 @@ class WormAuditLogger:
 
     def get_all_records(self) -> List[AuditRecord]:
         return list(self._records)
+
