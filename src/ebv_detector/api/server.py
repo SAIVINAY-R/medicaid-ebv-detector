@@ -144,6 +144,25 @@ class EBVRequestHandler(BaseHTTPRequestHandler):
             ])
             return
 
+        if path == "/api/db/stats":
+            with self.server_instance.cp1.graph_store.lock:
+                cur = self.server_instance.cp1.graph_store.conn.cursor()
+                cur.execute("SELECT node_type, COUNT(*) as cnt FROM graph_nodes GROUP BY node_type")
+                node_counts = {r["node_type"]: r["cnt"] for r in cur.fetchall()}
+                cur.execute("SELECT edge_type, COUNT(*) as cnt FROM graph_edges GROUP BY edge_type")
+                edge_counts = {r["edge_type"]: r["cnt"] for r in cur.fetchall()}
+                cur.execute("SELECT COUNT(*) as total FROM graph_nodes")
+                total_nodes = cur.fetchone()["total"]
+                cur.execute("SELECT COUNT(*) as total FROM graph_edges")
+                total_edges = cur.fetchone()["total"]
+            self._send_json_response(200, {
+                "total_nodes": total_nodes,
+                "total_edges": total_edges,
+                "nodes_by_type": node_counts,
+                "edges_by_type": edge_counts
+            })
+            return
+
         self.send_response(404)
         self.end_headers()
 
@@ -176,6 +195,30 @@ class EBVRequestHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 traceback.print_exc(file=sys.stderr)
                 self._send_json_response(500, {"error": f"Claims surveillance error: {str(e)}"})
+            return
+
+        if path == "/api/db/query":
+            sql = (body.get("query") or body.get("sql") or "").strip()
+            if not sql:
+                self._send_json_response(400, {"error": "Missing 'sql' query parameter in request body."})
+                return
+            if not sql.upper().startswith("SELECT"):
+                self._send_json_response(403, {"error": "Only read-only SELECT queries are permitted."})
+                return
+            try:
+                with self.server_instance.cp1.graph_store.lock:
+                    cur = self.server_instance.cp1.graph_store.conn.cursor()
+                    cur.execute(sql)
+                    columns = [d[0] for d in cur.description] if cur.description else []
+                    rows = [dict(zip(columns, row)) for row in cur.fetchmany(200)]
+                self._send_json_response(200, {
+                    "query": sql,
+                    "columns": columns,
+                    "row_count": len(rows),
+                    "rows": rows
+                })
+            except Exception as e:
+                self._send_json_response(400, {"error": f"SQL execution error: {str(e)}"})
             return
 
         self.send_response(404)

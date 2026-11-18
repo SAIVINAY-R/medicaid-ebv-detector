@@ -9,6 +9,7 @@ Complies with:
 """
 
 from dataclasses import dataclass, field
+import os
 from typing import Dict, List, Set
 
 
@@ -40,6 +41,7 @@ class EntityResolutionConfig:
 @dataclass(frozen=True)
 class GraphConfig:
     """M3 Deterministic traversal and risk propagation configuration."""
+    sqlite_db_path: str = os.environ.get("EBV_DB_PATH", ":memory:")
     max_traversal_hops: int = 3
     indirect_ownership_threshold: float = 0.05  # 5% threshold under 42 CFR 455.104
     

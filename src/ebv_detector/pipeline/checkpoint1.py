@@ -55,7 +55,7 @@ class Checkpoint1Pipeline:
         self.seeds = seeds or []
         
         # Subsystems
-        self.graph_store = GraphStore()
+        self.graph_store = GraphStore(db_path=self.config.graph.sqlite_db_path)
         self.supernode_mgr = SupernodeManager(
             self.graph_store,
             degree_threshold=self.config.graph.supernode_degree_threshold,
