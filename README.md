@@ -8,6 +8,10 @@ Complies strictly with:
 - **NC RFP Attachment C Section 3**: Assistive-only ML governance, NIST AI RMF documentation, and zero training on or derivation from State Data (§3(e)(ii)).
 - **DATA-039 / DT-SCR-GATE-002**: Statutory address prohibitions (CMRA mailbox stores, PMB, PO Box, virtual offices).
 
+> 📖 **Comprehensive System Guides:**
+> - [**docs/END_TO_END_FLOW.md**](docs/END_TO_END_FLOW.md): Complete end-to-end flow, regulatory checkpoints, and the 6 fraud typologies.
+> - [**docs/ML_TECHNIQUES_AND_ARCHITECTURAL_RATIONALE.md**](docs/ML_TECHNIQUES_AND_ARCHITECTURAL_RATIONALE.md): Deep-dive into all 11 ML/statistical techniques and the actual real-world reasons behind every architectural decision.
+
 ---
 
 ## Architecture Overview
