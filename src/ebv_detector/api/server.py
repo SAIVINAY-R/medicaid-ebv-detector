@@ -134,6 +134,11 @@ class EBVRequestHandler(BaseHTTPRequestHandler):
                 {
                     "record_id": r.record_id,
                     "application_id": r.application_id,
+                    "event_type": getattr(r, "event_type", "AUTOMATED_EVALUATION"),
+                    "parent_record_id": getattr(r, "parent_record_id", None),
+                    "reviewer_id": r.reviewer_id,
+                    "reviewer_action": r.reviewer_action,
+                    "reviewer_notes": r.reviewer_notes,
                     "timestamp_utc": r.timestamp_utc,
                     "layer1_status": r.layer1_status,
                     "advisory_priority_score": r.advisory_priority_score,
@@ -142,6 +147,15 @@ class EBVRequestHandler(BaseHTTPRequestHandler):
                 }
                 for r in reversed(records[-50:])
             ])
+            return
+
+        if path == "/api/audit/verify":
+            chain_valid = self.server_instance.cp1.audit_logger.verify_chain()
+            records = self.server_instance.cp1.audit_logger.get_all_records()
+            self._send_json_response(200, {
+                "chain_valid": chain_valid,
+                "total_records": len(records)
+            })
             return
 
         if path == "/api/db/stats":
@@ -219,6 +233,35 @@ class EBVRequestHandler(BaseHTTPRequestHandler):
                 })
             except Exception as e:
                 self._send_json_response(400, {"error": f"SQL execution error: {str(e)}"})
+            return
+
+        if path == "/api/audit/override":
+            record_id = body.get("record_id")
+            reviewer_id = body.get("reviewer_id")
+            action = body.get("action")
+            notes = body.get("notes") or ""
+            if not record_id or not reviewer_id or not action:
+                self._send_json_response(400, {"error": "Missing required fields: record_id, reviewer_id, action"})
+                return
+            try:
+                new_rec = self.server_instance.cp1.audit_logger.record_reviewer_override(
+                    record_id=record_id,
+                    reviewer_id=reviewer_id,
+                    action=action,
+                    notes=notes
+                )
+                chain_valid = self.server_instance.cp1.audit_logger.verify_chain()
+                self._send_json_response(200, {
+                    "status": "success",
+                    "new_record_id": new_rec.record_id,
+                    "parent_record_id": new_rec.parent_record_id,
+                    "event_type": new_rec.event_type,
+                    "chain_valid": chain_valid,
+                    "audit_hash": new_rec.audit_hash
+                })
+            except Exception as e:
+                traceback.print_exc(file=sys.stderr)
+                self._send_json_response(500, {"error": f"Override error: {str(e)}"})
             return
 
         self.send_response(404)
