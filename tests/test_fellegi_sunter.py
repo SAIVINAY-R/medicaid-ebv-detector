@@ -58,6 +58,30 @@ class TestFellegiSunter(unittest.TestCase):
         self.assertEqual(adjudicated.adjudicated_action, AdjudicationAction.LINK)
         self.assertTrue(self.queue.is_confirmed_link("APP-001", "APP-002"))
 
+    def test_audit_v2_identifier_conflict_and_demotion(self):
+        # Pair with same name + phone, but differing NPI and TIN
+        app_a = ProviderApplication(
+            application_id="APP-101",
+            npi="1111111111",
+            legal_business_name="North Carolina Health Partners LLC",
+            tin="11-1111111",
+            phone="919-555-9999",
+        )
+        app_b = ProviderApplication(
+            application_id="APP-102",
+            npi="2222222222",
+            legal_business_name="North Carolina Health Partners LLC",
+            tin="22-2222222",
+            phone="919-555-9999",
+        )
+        res = self.resolver.compare_pair(app_a, app_b, "phone_clean:9195559999")
+        # Must be demoted to near-match queue, NOT auto-linked
+        self.assertFalse(res.is_match)
+        self.assertTrue(res.is_near_match)
+        self.assertEqual(res.recommended_action, "SEND_TO_QUEUE")
+        self.assertTrue(res.hard_conflict)
+        self.assertIn("Hard identifier conflict", res.explanation)
+
 
 if __name__ == "__main__":
     unittest.main()

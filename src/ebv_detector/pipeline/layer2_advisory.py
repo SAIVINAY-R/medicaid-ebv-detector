@@ -4,16 +4,112 @@ Produces explainable queue triage scores, evidence panels, and recommended actio
 - Complies strictly with ADR-0001: Assistive only; never auto-approves or auto-denies
 - Complies with Section 5.1 language standard: Uses 'Pattern requires review', never 'Fraud'
 - Generates transparent feature contributions adhering to NIST AI RMF standards
+- Saturating score transform: priority = 100 * (1 - exp(-S / k))
+- Strict feature attribution: sum(contributions.values()) == priority_score
 """
 
-from typing import Dict, List, Optional
+from collections import defaultdict
+import math
+from typing import Dict, List, Optional, Tuple
 
+from ..config import SystemConfig
 from ..models.entities import ProviderApplication
 from ..models.results import AdvisoryScore, DecisionStatus, EvidenceItem, EvidenceSeverity, Layer1Decision
 
 
 class Layer2AdvisoryEngine:
     """Computes assistive priority score and formats explainable evidence panels."""
+
+    def __init__(self, config: Optional[SystemConfig] = None):
+        self.config = config or SystemConfig()
+
+    def _infer_family(self, code: str) -> str:
+        """Infer evidence family if not explicitly provided."""
+        c = code.upper()
+        if "OWNER" in c:
+            return "OWNERSHIP"
+        if "ADDR" in c or "LOCATION" in c or "MAILBOX" in c:
+            return "ADDRESS"
+        if "TEMPLATE" in c or "VELOCITY" in c or "DEVICE" in c or "IP" in c or "EMAIL" in c or "SUBMISSION" in c:
+            return "SUBMISSION"
+        if "RESOLVER" in c or "IDENTITY" in c or "MATCH" in c:
+            return "IDENTITY"
+        if "AGE" in c or "RAPID-FORMATION" in c or "FORMATION" in c:
+            return "AGE"
+        if "SEED" in c or "GRAPH" in c or "PPR" in c or "AFFILIATION" in c:
+            return "AFFILIATION"
+        return "SUBMISSION"
+
+    def _get_raw_weight(self, ev: EvidenceItem) -> float:
+        """Map evidence item to expert-calibrated relative weight."""
+        code = ev.code.upper()
+
+        # 1. Affiliation family items
+        if "EFT" in code and "SEED" in code:
+            return 5.0
+        if "PERSON" in code and "SEED" in code:
+            return 5.0
+        if "NPI" in code and "SEED" in code:
+            return 5.0
+        if "TIN" in code and "SEED" in code:
+            return 5.0
+        if "PHONE" in code and "SEED" in code:
+            return 3.0
+        if code == "M3-GRAPH-PATH-TO-SEED":
+            hops = ev.details.get("shortest_path_hops", 1)
+            return 1.5 if hops >= 3 else 3.0
+        if "CLINICIAN" in code:
+            return 1.5
+
+        # 2. Ownership family items
+        if "INDIRECT-OWNERSHIP" in code:
+            return 5.0
+        if "PARENT" in code:
+            return 2.0
+
+        # 3. Address family items
+        if "SEED-ADDRESS" in code:
+            return 4.0
+        if any(m in code for m in ["MAIL-DROP", "PO-BOX", "PMB"]):
+            return 3.0
+        if "VACANT" in code:
+            return 2.0
+        if "HIGH-DENSITY" in code:
+            return 2.0
+
+        # 4. Submission family items
+        if "POLICY-CLONE" in code:
+            matching_count = ev.details.get("matching_apps_count", 1)
+            return min(4.0, 1.5 + math.log2(max(1.0, float(matching_count))))
+        if any(v in code for v in ["DEVICE-SHARING", "IP-VELOCITY", "EMAIL-REUSE"]):
+            count = ev.details.get("recent_count", 1)
+            return min(4.0, 1.5 + math.log2(max(1.0, float(count))))
+
+        # 5. Identity family items
+        if "RESOLVER-HIGH-CONFIDENCE" in code:
+            prob = ev.details.get("posterior_prob", 0.95)
+            return 4.0 * prob
+        if "NEAR-MATCH" in code:
+            return 1.5
+
+        # 6. Age family items
+        if "RAPID-FORMATION" in code:
+            days = ev.details.get("days_since_formation", 7)
+            if days is not None and days < 30:
+                return 1.5
+            return 0.75
+        if "FORMATION-DATE-MISSING" in code:
+            return 0.5
+
+        # Fallback by severity
+        sev_map = {
+            EvidenceSeverity.CRITICAL: 4.0,
+            EvidenceSeverity.HIGH: 2.5,
+            EvidenceSeverity.MEDIUM: 1.5,
+            EvidenceSeverity.LOW: 0.75,
+            EvidenceSeverity.INFO: 0.0
+        }
+        return sev_map.get(ev.severity, 1.0)
 
     def compute_advisory_package(
         self,
@@ -22,106 +118,161 @@ class Layer2AdvisoryEngine:
         evidence_items: List[EvidenceItem],
         ppr_risk_score: float = 0.0
     ) -> AdvisoryScore:
-        """Synthesize all layer signals into an assistive review package."""
-        # 1. Base Score from Layer 1 Decision Status
-        score = 0.0
-        contributions: Dict[str, float] = {}
+        """Synthesize layer signals into an assistive review package.
 
-        if layer1_decision.status.value in ("DENIED_GROUNDS", "REFERRED_TO_PI"):
-            score += 50.0
-            contributions["layer1_statutory_grounds"] = 50.0
-        elif layer1_decision.assigned_aca_risk_tier == "HIGH":
-            score += 25.0
-            contributions["aca_tier_high"] = 25.0
-        elif layer1_decision.assigned_aca_risk_tier == "MODERATE":
-            score += 10.0
-            contributions["aca_tier_moderate"] = 10.0
-
-        # 2. Add Contributions from Evidence Items
-        sev_weights = {
-            EvidenceSeverity.CRITICAL: 20.0,
-            EvidenceSeverity.HIGH: 12.0,
-            EvidenceSeverity.MEDIUM: 6.0,
-            EvidenceSeverity.LOW: 2.0,
-            EvidenceSeverity.INFO: 0.0
+        Complies strictly with ADR-0001:
+        - Layer 1 statutory grounds and ACA tier are NOT added into priority_score
+        - Deduplicates facts by fact_key
+        - Groups facts into families with diminishing returns and family caps
+        - Applies saturating transform priority = 100 * (1 - exp(-S / k))
+        - Scales family contributions so sum(contributions.values()) == priority_score
+        """
+        scoring_cfg = getattr(self.config, "scoring", None)
+        k = scoring_cfg.saturation_k if scoring_cfg else 4.0
+        family_caps = scoring_cfg.family_caps if scoring_cfg else {
+            "AFFILIATION": 6.0,
+            "OWNERSHIP": 5.0,
+            "ADDRESS": 4.0,
+            "SUBMISSION": 4.0,
+            "IDENTITY": 4.0,
+            "AGE": 1.5
         }
+        decay_factors = scoring_cfg.decay_factors if scoring_cfg else [1.0, 0.5, 0.25, 0.125]
 
-        near_match_points = 0.0
+        # 1. Deduplicate facts by fact_key, selecting the highest raw weight per fact
+        facts_by_key: Dict[str, Tuple[EvidenceItem, float, str]] = {}
         for ev in evidence_items:
-            # Cap cumulative near-match queue score so clean apps don't get inflated
-            if ev.code == "M1-RESOLVER-NEAR-MATCH-ENQUEUED":
-                if near_match_points >= 10.0:
-                    continue
-                near_match_points += 5.0
-                weight = 5.0
-            else:
-                weight = sev_weights.get(ev.severity, 2.0)
-            score += weight
-            contributions[ev.code] = contributions.get(ev.code, 0.0) + weight
+            f_key = ev.fact_key or ev.code
+            fam = (ev.family or self._infer_family(ev.code)).upper()
+            w = self._get_raw_weight(ev)
+            if f_key not in facts_by_key or w > facts_by_key[f_key][1]:
+                facts_by_key[f_key] = (ev, w, fam)
 
-        # 3. Add Contribution from Seed Personalized PageRank
-        if ppr_risk_score > 0.0:
-            ppr_points = min(25.0, ppr_risk_score * 25.0)
-            score += ppr_points
-            contributions["m3_seed_proximity_ppr"] = round(ppr_points, 1)
+        # 2. Check if direct graph path or direct seed match explains affiliation
+        has_direct_affiliation = any(
+            fam == "AFFILIATION" and ("SEED" in ev.code or "GRAPH-PATH" in ev.code)
+            for ev, _, fam in facts_by_key.values()
+        )
 
-        # Cap score between 0.0 and 100.0
-        final_priority = min(100.0, max(0.0, score))
+        # 3. Add PageRank risk points only when no direct path explains affiliation (Audit §3.2, §3.6)
+        if not has_direct_affiliation and ppr_risk_score > 0.0:
+            ppr_weight = min(2.5, ppr_risk_score * 5.0)
+            ppr_ev = EvidenceItem(
+                code="M3-PPR-GRAPH-PROXIMITY",
+                description=f"Personalized PageRank seed proximity score: {ppr_risk_score:.3f}",
+                source_layer="M3_GRAPH",
+                severity=EvidenceSeverity.HIGH if ppr_risk_score >= 0.4 else EvidenceSeverity.MEDIUM,
+                verified_fact=False,
+                fact_key="PPR:SEED_PROXIMITY",
+                family="AFFILIATION",
+                details={"ppr_score": ppr_risk_score}
+            )
+            facts_by_key["PPR:SEED_PROXIMITY"] = (ppr_ev, ppr_weight, "AFFILIATION")
 
-        # Risk level categorization
-        has_critical_ev = any(e.severity == EvidenceSeverity.CRITICAL for e in evidence_items)
-        has_high_ev = any(e.severity == EvidenceSeverity.HIGH for e in evidence_items)
+        # 4. Group unique facts by family and apply diminishing returns
+        family_weights: Dict[str, List[float]] = defaultdict(list)
+        for ev, w, fam in facts_by_key.values():
+            family_weights[fam].append(w)
 
-        if final_priority >= 75.0 or len(layer1_decision.statutory_grounds) > 0 or has_critical_ev:
+        capped_family_scores: Dict[str, float] = {}
+        for fam, weights in family_weights.items():
+            weights.sort(reverse=True)
+            fam_score = 0.0
+            for i, w in enumerate(weights):
+                factor = decay_factors[i] if i < len(decay_factors) else decay_factors[-1] * (0.5 ** (i - len(decay_factors) + 1))
+                fam_score += w * factor
+            cap = family_caps.get(fam, 5.0)
+            capped_family_scores[fam] = min(cap, fam_score)
+
+        # 5. Saturating Score Transform: S = sum(capped_family_scores), priority = 100 * (1 - exp(-S / k))
+        raw_s = sum(capped_family_scores.values())
+        if raw_s > 0.0:
+            priority_score = 100.0 * (1.0 - math.exp(-raw_s / k))
+            priority_score_rounded = round(min(100.0, max(0.0, priority_score)), 1)
+        else:
+            priority_score = 0.0
+            priority_score_rounded = 0.0
+
+        # 6. Compute Normalized Contributions summing exactly to priority_score_rounded
+        contributions: Dict[str, float] = {}
+        if raw_s > 0.0 and priority_score_rounded > 0.0:
+            for fam, score in capped_family_scores.items():
+                fam_key = fam.lower()
+                contributions[fam_key] = round(priority_score_rounded * (score / raw_s), 1)
+
+            # Ensure sum(contributions) == priority_score_rounded by reconciling rounding residual
+            diff = round(priority_score_rounded - sum(contributions.values()), 1)
+            if abs(diff) > 0.001 and contributions:
+                max_fam = max(contributions.keys(), key=lambda f: contributions[f])
+                contributions[max_fam] = round(contributions[max_fam] + diff, 1)
+
+        # 7. Derive Composite Risk Level from score capacity bands (§3.16)
+        if priority_score_rounded >= 70.0:
             risk_level = "CRITICAL"
-        elif final_priority >= 45.0 or has_high_ev:
+        elif priority_score_rounded >= 40.0:
             risk_level = "HIGH"
-        elif final_priority >= 20.0 or layer1_decision.status == DecisionStatus.REVIEW_REQUIRED:
+        elif priority_score_rounded >= 20.0:
             risk_level = "MEDIUM"
         else:
             risk_level = "LOW"
 
-        # 4. Formulate Recommended Actions
+        # 8. Recommend Actions following the specific evidence families present (§3.1)
         actions = []
-        if risk_level == "CRITICAL" or len(layer1_decision.statutory_grounds) > 0:
-            actions.extend([
-                "REFER_TO_PROGRAM_INTEGRITY (Credible Allegation of Fraud evaluation)",
-                "MANDATORY_UNANNOUNCED_SITE_VISIT (Verify physical operational clinic)",
-                "HOLD_CLAIMS_PREPAYMENT_REVIEW (Prevent improper disbursements)"
-            ])
-        elif risk_level == "HIGH":
-            actions.extend([
-                "ORDER_UNANNOUNCED_SITE_VISIT (Verify practice location existence)",
-                "REQUEST_BANK_ACCOUNT_PROOF (Verify EFT ownership under business TIN)",
-                "REQUIRE_FINGERPRINT_CRIMINAL_CHECKS (For all 5%+ and managing owners)"
-            ])
-        elif risk_level == "MEDIUM":
-            actions.append("REQUEST_ADDITIONAL_INFORMATION (Resolve near-match / address inquiries)")
-        else:
+        if capped_family_scores.get("ADDRESS", 0.0) > 0.0:
+            actions.append("UNANNOUNCED_SITE_VISIT (Verify physical operational facility under 42 CFR 455.432)")
+        if capped_family_scores.get("AFFILIATION", 0.0) > 0.0:
+            has_eft = any("EFT" in ev.code for ev, _, _ in facts_by_key.values())
+            has_person = any("PERSON" in ev.code for ev, _, _ in facts_by_key.values())
+            if has_eft:
+                actions.append("REQUEST_BANK_ACCOUNT_PROOF (Verify EFT ownership under business TIN)")
+            if has_person:
+                actions.append("REQUIRE_FINGERPRINT_CRIMINAL_CHECKS (For all 5%+ and managing owners under 42 CFR 455.434)")
+            if any("SEED" in ev.code for ev, _, _ in facts_by_key.values()):
+                actions.append("REFER_TO_PROGRAM_INTEGRITY (Credible Allegation of Fraud evaluation under 42 CFR 455.23)")
+        if capped_family_scores.get("OWNERSHIP", 0.0) > 0.0:
+            actions.append("REQUEST_DISCLOSURE_CLARIFICATION (Verify complete 5%+ ownership chain under 42 CFR 455.104)")
+        if capped_family_scores.get("IDENTITY", 0.0) > 0.0:
+            actions.append("RESOLVE_NEAR_MATCH_QUEUE (Review candidate identity linkage)")
+        if capped_family_scores.get("SUBMISSION", 0.0) > 0.0:
+            actions.append("DESK_REVIEW_SUBMISSION_INTEGRITY (Review template similarity and submission telemetry)")
+
+        if not actions:
             actions.append("STANDARD_STREAMLINED_PROCESSING")
 
-        # 5. Non-inflammatory explanation summary (§5.1 compliant)
-        critical_codes = [e.code for e in evidence_items if e.severity == EvidenceSeverity.CRITICAL]
-        high_codes = [e.code for e in evidence_items if e.severity == EvidenceSeverity.HIGH]
-        
-        if critical_codes:
+        # 9. Non-inflammatory explanation summary (§5.1 compliant)
+        sorted_fams = sorted(capped_family_scores.items(), key=lambda x: x[1], reverse=True)
+        active_fams = [f"{fam.title()} ({score:.1f} pts)" for fam, score in sorted_fams if score > 0]
+        fams_str = ", ".join(active_fams) if active_fams else "none"
+
+        if priority_score_rounded >= 70.0:
             summary = (
-                f"Pattern requires priority human review due to {len(critical_codes)} critical screening indicators "
-                f"({', '.join(critical_codes[:3])}). Direct regulatory grounds or seed linkages present."
+                f"Pattern requires priority human review (Priority Score: {priority_score_rounded:.1f}/100, Level: {risk_level}). "
+                f"Primary risk drivers: {fams_str}."
             )
-        elif high_codes:
+        elif priority_score_rounded >= 40.0:
             summary = (
-                f"Pattern requires expedited review based on {len(high_codes)} elevated anomaly signals "
-                f"({', '.join(high_codes[:3])}). Site visit and identity corroboration recommended."
+                f"Pattern requires expedited review (Priority Score: {priority_score_rounded:.1f}/100, Level: {risk_level}). "
+                f"Primary risk drivers: {fams_str}."
+            )
+        elif priority_score_rounded >= 20.0:
+            summary = (
+                f"Pattern requires standard review (Priority Score: {priority_score_rounded:.1f}/100, Level: {risk_level}). "
+                f"Notable factors: {fams_str}."
             )
         else:
-            summary = "Application exhibits standard baseline indicators. No critical anomaly patterns detected."
+            summary = (
+                f"Application exhibits standard baseline indicators (Priority Score: {priority_score_rounded:.1f}/100, Level: {risk_level}). "
+                "No elevated risk patterns detected."
+            )
+
+        # Pass unique deduplicated evidence items list
+        deduped_evidence = [item[0] for item in facts_by_key.values()]
 
         return AdvisoryScore(
             application_id=app.application_id,
-            priority_score=round(final_priority, 1),
+            priority_score=priority_score_rounded,
             composite_risk_level=risk_level,
-            evidence_items=evidence_items,
+            evidence_items=deduped_evidence,
             recommended_review_actions=actions,
             explanation_summary=summary,
             feature_contributions=contributions

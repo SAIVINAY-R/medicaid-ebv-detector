@@ -51,6 +51,9 @@ class Layer1RulesEngine:
             elif s.identifier_type == "ADDRESS":
                 self._seeds_by_address[val] = s
             elif s.identifier_type == "PHONE":
+                clean_p = "".join(filter(str.isdigit, val))
+                if clean_p:
+                    self._seeds_by_phone[clean_p] = s
                 self._seeds_by_phone[val] = s
 
     def assign_aca_risk_tier(self, app: ProviderApplication) -> Tuple[str, List[str]]:
@@ -118,73 +121,128 @@ class Layer1RulesEngine:
         # 2. Check Direct NPI Exclusions
         if app.npi in self._seeds_by_npi:
             seed = self._seeds_by_npi[app.npi]
-            statutory_grounds.append("42 CFR 455.416(c) - Prior exclusion or termination by federal/state authority")
-            verified_facts.append(EvidenceItem(
-                code="L1-SEED-NPI-MATCH",
-                description=f"Applicant NPI '{app.npi}' directly matches active sanction record ({seed.source}: {seed.reason}).",
-                source_layer="LAYER_1",
-                severity=EvidenceSeverity.CRITICAL,
-                verified_fact=True,
-                details={"seed_id": seed.seed_id, "source": seed.source, "reason": seed.reason}
-            ))
+            if seed.is_active_on(app.application_date):
+                statutory_grounds.append("42 CFR 455.416(c) - Prior exclusion or termination by federal/state authority")
+                verified_facts.append(EvidenceItem(
+                    code="L1-SEED-NPI-MATCH",
+                    description=f"Applicant NPI '{app.npi}' directly matches active sanction record ({seed.source}: {seed.reason}).",
+                    source_layer="LAYER_1",
+                    severity=EvidenceSeverity.CRITICAL,
+                    verified_fact=True,
+                    fact_key=f"NPI:{app.npi}",
+                    family="AFFILIATION",
+                    details={"seed_id": seed.seed_id, "source": seed.source, "reason": seed.reason}
+                ))
 
         # 3. Check Direct TIN Exclusions
         clean_tin = app.tin.replace("-", "").strip()
         if clean_tin in self._seeds_by_tin:
             seed = self._seeds_by_tin[clean_tin]
-            statutory_grounds.append("42 CFR 455.416(c) - Tax ID sanctioned under exclusion list")
-            verified_facts.append(EvidenceItem(
-                code="L1-SEED-TIN-MATCH",
-                description=f"Applicant TIN matches sanctioned entity ({seed.source}: {seed.reason}).",
-                source_layer="LAYER_1",
-                severity=EvidenceSeverity.CRITICAL,
-                verified_fact=True,
-                details={"seed_id": seed.seed_id, "source": seed.source, "reason": seed.reason}
-            ))
+            if seed.is_active_on(app.application_date):
+                statutory_grounds.append("42 CFR 455.416(c) - Tax ID sanctioned under exclusion list")
+                verified_facts.append(EvidenceItem(
+                    code="L1-SEED-TIN-MATCH",
+                    description=f"Applicant TIN matches sanctioned entity ({seed.source}: {seed.reason}).",
+                    source_layer="LAYER_1",
+                    severity=EvidenceSeverity.CRITICAL,
+                    verified_fact=True,
+                    fact_key=f"TIN:{clean_tin}",
+                    family="AFFILIATION",
+                    details={"seed_id": seed.seed_id, "source": seed.source, "reason": seed.reason}
+                ))
 
         # 4. Check Disclosed Persons (SSN4 + DOB) against Seeds
         for p in app.disclosed_persons:
             key = p.ssn_dob_key
             if key in self._seeds_by_ssn4_dob:
                 seed = self._seeds_by_ssn4_dob[key]
-                statutory_grounds.append("42 CFR 455.416(c) - Disclosed owner/officer excluded under 1128(a)(1)")
-                verified_facts.append(EvidenceItem(
-                    code="L1-SEED-PERSON-EXCLUDED",
-                    description=(
-                        f"Disclosed individual '{p.full_name}' ({p.role}) matches sanctioned seed record "
-                        f"({seed.source}: {seed.reason})."
-                    ),
-                    source_layer="LAYER_1",
-                    severity=EvidenceSeverity.CRITICAL,
-                    verified_fact=True,
-                    details={"person_name": p.full_name, "role": p.role, "source": seed.source}
-                ))
+                if seed.is_active_on(app.application_date):
+                    statutory_grounds.append("42 CFR 455.416(c) - Disclosed owner/officer excluded under 1128(a)(1)")
+                    verified_facts.append(EvidenceItem(
+                        code="L1-SEED-PERSON-EXCLUDED",
+                        description=(
+                            f"Disclosed individual '{p.full_name}' ({p.role}) matches sanctioned seed record "
+                            f"({seed.source}: {seed.reason})."
+                        ),
+                        source_layer="LAYER_1",
+                        severity=EvidenceSeverity.CRITICAL,
+                        verified_fact=True,
+                        fact_key=f"PERSON:{key}",
+                        family="AFFILIATION",
+                        details={"person_name": p.full_name, "role": p.role, "source": seed.source}
+                    ))
 
         # 5. Check EFT Account Shared with Terminated Provider
         if app.eft_account:
             eft_k = app.eft_account.account_key
             if eft_k in self._seeds_by_eft:
                 seed = self._seeds_by_eft[eft_k]
-                statutory_grounds.append("42 CFR 455.416(a) - Bank account associated with previously terminated provider")
+                if seed.is_active_on(app.application_date):
+                    statutory_grounds.append("42 CFR 455.416(a) - Bank account associated with previously terminated provider")
+                    verified_facts.append(EvidenceItem(
+                        code="L1-SEED-EFT-SHARED-TERMINATION",
+                        description=(
+                            f"EFT bank account '{app.eft_account.routing_number}-*****' matches bank account of a "
+                            f"previously terminated provider ({seed.source}: {seed.reason})."
+                        ),
+                        source_layer="LAYER_1",
+                        severity=EvidenceSeverity.CRITICAL,
+                        verified_fact=True,
+                        fact_key=f"EFT:{eft_k}",
+                        family="AFFILIATION",
+                        details={"seed_id": seed.seed_id, "reason": seed.reason}
+                    ))
+
+        # 6. Check Phone Number Matches Sanctioned Entity
+        clean_phone = "".join(filter(str.isdigit, app.phone or ""))
+        if clean_phone and clean_phone in self._seeds_by_phone:
+            seed = self._seeds_by_phone[clean_phone]
+            if seed.is_active_on(app.application_date):
+                statutory_grounds.append("42 CFR 455.416 - Phone number matches sanctioned entity")
                 verified_facts.append(EvidenceItem(
-                    code="L1-SEED-EFT-SHARED-TERMINATION",
+                    code="L1-SEED-PHONE-MATCH",
                     description=(
-                        f"EFT bank account '{app.eft_account.routing_number}-*****' matches bank account of a "
-                        f"previously terminated provider ({seed.source}: {seed.reason})."
+                        f"Applicant phone number '{app.phone}' matches telephone of a "
+                        f"previously sanctioned entity ({seed.source}: {seed.reason})."
                     ),
                     source_layer="LAYER_1",
                     severity=EvidenceSeverity.CRITICAL,
                     verified_fact=True,
-                    details={"seed_id": seed.seed_id, "reason": seed.reason}
+                    fact_key=f"PHONE:{clean_phone}",
+                    family="AFFILIATION",
+                    details={"seed_id": seed.seed_id, "source": seed.source, "reason": seed.reason}
                 ))
 
-        # 6. Evaluate Address Rules (DATA-039 Prohibitions)
-        addr_evidence, is_fatal_addr = evaluate_address_rules(app.primary_address, app.service_category)
+        # 7. Check Address Matches Sanctioned Facility/Location
+        if app.primary_address:
+            norm_addr = app.primary_address.normalized_single_line.strip().upper()
+            if norm_addr and norm_addr in self._seeds_by_address:
+                seed = self._seeds_by_address[norm_addr]
+                if seed.is_active_on(app.application_date):
+                    statutory_grounds.append("42 CFR 455.416 - Service address matches sanctioned location")
+                    verified_facts.append(EvidenceItem(
+                        code="L1-SEED-ADDRESS-MATCH",
+                        description=(
+                            f"Applicant primary address '{app.primary_address.address_line1}' matches address of a "
+                            f"previously sanctioned provider ({seed.source}: {seed.reason})."
+                        ),
+                        source_layer="LAYER_1",
+                        severity=EvidenceSeverity.CRITICAL,
+                        verified_fact=True,
+                        fact_key=f"ADDR:{norm_addr}",
+                        family="ADDRESS",
+                        details={"seed_id": seed.seed_id, "source": seed.source, "reason": seed.reason}
+                    ))
+
+        # 8. Evaluate Address Rules (DATA-039 Prohibitions)
+        addr_evidence, is_fatal_addr = evaluate_address_rules(
+            app.primary_address, app.service_category, config=self.config.address
+        )
         verified_facts.extend(addr_evidence)
         if is_fatal_addr:
             statutory_grounds.append("42 CFR 455.416 / DATA-039 - Prohibited or invalid service location")
 
-        # 7. Evaluate GR-4 Indirect Ownership Exclusions
+        # 9. Evaluate GR-4 Indirect Ownership Exclusions
         if indirect_ownership_results:
             for ind_res in indirect_ownership_results:
                 if ind_res.meets_5pct_statutory_threshold and ind_res.is_upstream_excluded_seed:
@@ -201,6 +259,8 @@ class Layer1RulesEngine:
                         source_layer="LAYER_1",
                         severity=EvidenceSeverity.CRITICAL,
                         verified_fact=True,
+                        fact_key=f"OWNER:{ind_res.upstream_entity_id}",
+                        family="OWNERSHIP",
                         details={
                             "upstream_entity": ind_res.upstream_entity_id,
                             "indirect_pct": ind_res.effective_indirect_pct,
@@ -208,9 +268,9 @@ class Layer1RulesEngine:
                         }
                     ))
 
-        # 8. Determine Decision Status
+        # 10. Determine Decision Status (Pending human adjudicative confirmation)
         if len(statutory_grounds) > 0:
-            status = DecisionStatus.DENIED_GROUNDS
+            status = DecisionStatus.GROUNDS_PENDING_HUMAN_DECISION
             can_auto = False
         elif tier in ("HIGH", "MODERATE") or len(verified_facts) > 0:
             status = DecisionStatus.REVIEW_REQUIRED

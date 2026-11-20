@@ -763,24 +763,24 @@
 
                         {/* DECISION STATUS HERO BANNER */}
                         <div className={`p-5 rounded-2xl border shadow-xl flex items-start justify-between gap-4 ${
-                          result.layer1_decision.status === 'DENIED_GROUNDS'
+                          (result.layer1_decision.status === 'DENIED_GROUNDS' || result.layer1_decision.status === 'GROUNDS_PENDING_HUMAN_DECISION')
                             ? 'bg-red-500/10 border-red-500/40 text-red-200'
                             : result.layer1_decision.status === 'REVIEW_REQUIRED'
                             ? 'bg-amber-500/10 border-amber-500/40 text-amber-200'
                             : 'bg-emerald-500/10 border-emerald-500/40 text-emerald-200'
                         }`}>
                           <div className="space-y-1">
-                            <span className="text-[10px] uppercase font-bold tracking-widest px-2.5 py-0.5 rounded-full inline-block mb-1 border ${
-                              result.layer1_decision.status === 'DENIED_GROUNDS'
+                            <span className={`text-[10px] uppercase font-bold tracking-widest px-2.5 py-0.5 rounded-full inline-block mb-1 border ${
+                              (result.layer1_decision.status === 'DENIED_GROUNDS' || result.layer1_decision.status === 'GROUNDS_PENDING_HUMAN_DECISION')
                                 ? 'bg-red-500/20 text-red-300 border-red-500/30'
                                 : result.layer1_decision.status === 'REVIEW_REQUIRED'
                                 ? 'bg-amber-500/20 text-amber-300 border-amber-500/30'
                                 : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
-                            }">
+                            }`}>
                               {result.layer1_decision.status}
                             </span>
                             <h3 className="font-extrabold text-lg sm:text-xl tracking-tight leading-tight">
-                              {result.layer1_decision.status === 'DENIED_GROUNDS' && 'FRAUD / STATUTORY DENIAL GROUNDS'}
+                              {(result.layer1_decision.status === 'DENIED_GROUNDS' || result.layer1_decision.status === 'GROUNDS_PENDING_HUMAN_DECISION') && 'STATUTORY DENIAL GROUNDS (PENDING ADJUDICATION)'}
                               {result.layer1_decision.status === 'REVIEW_REQUIRED' && 'ELEVATED RISK / HUMAN REVIEW REQUIRED'}
                               {result.layer1_decision.status === 'AUTO_APPROVE_ELIGIBLE' && 'VERIFIED CLEAN / AUTO-APPROVE ELIGIBLE'}
                             </h3>
@@ -1191,7 +1191,7 @@
                             <td className="py-2 px-3">{l.application_id}</td>
                             <td className="py-2 px-3">
                               <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                                l.layer1_status === 'DENIED_GROUNDS' ? 'text-red-400 bg-red-500/20' :
+                                (l.layer1_status === 'DENIED_GROUNDS' || l.layer1_status === 'GROUNDS_PENDING_HUMAN_DECISION') ? 'text-red-400 bg-red-500/20' :
                                 l.layer1_status === 'REVIEW_REQUIRED' ? 'text-amber-400 bg-amber-500/20' :
                                 'text-emerald-400 bg-emerald-500/20'
                               }`}>

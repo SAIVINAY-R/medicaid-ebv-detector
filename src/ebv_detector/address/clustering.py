@@ -67,7 +67,9 @@ class AddressClusterEngine:
                 ),
                 source_layer="M2_ADDRESS",
                 severity=EvidenceSeverity.HIGH,
-                verified_fact=True,
+                verified_fact=False,
+                fact_key=f"ADDR:{addr_key}",
+                family="ADDRESS",
                 details={
                     "address": addr_key,
                     "provider_count": density_count,

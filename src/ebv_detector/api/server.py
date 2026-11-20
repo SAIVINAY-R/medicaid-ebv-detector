@@ -228,10 +228,17 @@ class EBVRequestHandler(BaseHTTPRequestHandler):
 class EBVServer:
     """Encapsulates the HTTP server and pipeline state."""
 
-    def __init__(self, host: str = "127.0.0.1", port: int = 8080, config: Optional[SystemConfig] = None):
+    def __init__(
+        self,
+        host: str = "127.0.0.1",
+        port: int = 8080,
+        config: Optional[SystemConfig] = None,
+        demo_mode: bool = False
+    ):
         self.host = host
         self.port = port
         self.config = config or SystemConfig()
+        self.demo_mode = demo_mode
 
         # Seed dataset
         generator = SyntheticEBVGenerator(seed=42)
@@ -247,9 +254,10 @@ class EBVServer:
                 self.cp2.register_sanctioned_provider(s.identifier_value)
         self.cp2.ingest_claims(self.dataset.claims)
 
-        # Pre-seed cohort with legitimate providers
-        for app in self.dataset.applications[:10]:
-            self.cp1.evaluate_application(app)
+        # Pre-seed cohort with legitimate providers only in demo mode (Item 3.10)
+        if self.demo_mode:
+            for app in self.dataset.applications[:10]:
+                self.cp1.evaluate_application(app)
 
         self.httpd: Optional[ThreadingHTTPServer] = None
 
@@ -382,8 +390,9 @@ class EBVServer:
                 ))
 
         npi = str(payload.get("npi") or "1900000001").strip()
+        app_id = payload.get("application_id") or (f"APP-{npi[-6:]}" if len(npi) >= 6 else "APP-000001")
         app = ProviderApplication(
-            application_id=f"APP-{npi[-6:]}" if len(npi) >= 6 else "APP-000001",
+            application_id=app_id,
             npi=npi,
             legal_business_name=payload.get("legal_business_name") or "Sample Healthcare LLC",
             tin=str(payload.get("tin") or "56-1234567"),
@@ -433,6 +442,7 @@ class EBVServer:
                 "composite_risk_level": eval_pkg.advisory_score.composite_risk_level,
                 "explanation_summary": eval_pkg.advisory_score.explanation_summary,
                 "recommended_review_actions": eval_pkg.advisory_score.recommended_review_actions,
+                "feature_contributions": eval_pkg.advisory_score.feature_contributions,
                 "evidence_items": [
                     {
                         "code": e.code,

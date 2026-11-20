@@ -7,7 +7,7 @@ Enforces deterministic program integrity edits on claims:
 """
 
 from collections import defaultdict
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from ..config import ClaimsSignalConfig
 from ..models.entities import ClaimRecord

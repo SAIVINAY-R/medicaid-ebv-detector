@@ -119,6 +119,22 @@ class ClaimsSignalConfig:
 
 
 @dataclass(frozen=True)
+class ScoringConfig:
+    """Layer 2 calibrated advisory scoring parameters and family caps."""
+    saturation_k: float = 4.0
+    family_caps: Dict[str, float] = field(default_factory=lambda: {
+        "AFFILIATION": 6.0,
+        "OWNERSHIP": 5.0,
+        "ADDRESS": 4.0,
+        "SUBMISSION": 4.0,
+        "IDENTITY": 4.0,
+        "AGE": 1.5,
+    })
+    # Diminishing return decay factors for subsequent items within family
+    decay_factors: List[float] = field(default_factory=lambda: [1.0, 0.5, 0.25, 0.125])
+
+
+@dataclass(frozen=True)
 class SystemConfig:
     """Overall EBV system configuration combining all checkpoints."""
     entity_resolution: EntityResolutionConfig = field(default_factory=EntityResolutionConfig)
@@ -126,6 +142,7 @@ class SystemConfig:
     address: AddressConfig = field(default_factory=AddressConfig)
     anomaly: ApplicationAnomalyConfig = field(default_factory=ApplicationAnomalyConfig)
     claims: ClaimsSignalConfig = field(default_factory=ClaimsSignalConfig)
+    scoring: ScoringConfig = field(default_factory=ScoringConfig)
     
     # System metadata
     model_version: str = "v1.0.0-phase0"

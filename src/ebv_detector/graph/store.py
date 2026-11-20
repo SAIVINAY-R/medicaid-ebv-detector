@@ -65,28 +65,58 @@ class GraphStore:
             self.conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_edges_pair ON graph_edges(source_id, target_id);
             """)
+            self.conn.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_edges_unique 
+                ON graph_edges(source_id, target_id, edge_type, effective_start);
+            """)
 
     def add_node(self, node: GraphNode):
-        """Insert or replace graph node."""
+        """Insert or update graph node, preserving seed status and merging attributes."""
         with self.lock, self.conn:
+            existing = self.conn.execute(
+                "SELECT is_seed, seed_source, attributes_json FROM graph_nodes WHERE node_id = ?",
+                (node.node_id,)
+            ).fetchone()
+
+            is_seed = 1 if (node.is_seed or (existing and existing["is_seed"])) else 0
+            seed_source = node.seed_source or (existing["seed_source"] if existing else None)
+
+            merged_attrs = {}
+            if existing and existing["attributes_json"]:
+                try:
+                    merged_attrs = json.loads(existing["attributes_json"])
+                except Exception:
+                    pass
+            merged_attrs.update(node.attributes)
+
             self.conn.execute("""
-                INSERT OR REPLACE INTO graph_nodes (node_id, node_type, label, is_seed, seed_source, attributes_json)
+                INSERT INTO graph_nodes (node_id, node_type, label, is_seed, seed_source, attributes_json)
                 VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(node_id) DO UPDATE SET
+                    node_type = excluded.node_type,
+                    label = COALESCE(excluded.label, graph_nodes.label),
+                    is_seed = MAX(graph_nodes.is_seed, excluded.is_seed),
+                    seed_source = COALESCE(excluded.seed_source, graph_nodes.seed_source),
+                    attributes_json = excluded.attributes_json
             """, (
                 node.node_id,
                 node.node_type.value,
                 node.label,
-                1 if node.is_seed else 0,
-                node.seed_source,
-                json.dumps(node.attributes)
+                is_seed,
+                seed_source,
+                json.dumps(merged_attrs)
             ))
 
     def add_edge(self, edge: GraphEdge):
-        """Insert edge between two nodes."""
+        """Insert or upsert edge between two nodes to prevent duplicate edges."""
         with self.lock, self.conn:
             self.conn.execute("""
                 INSERT INTO graph_edges (source_id, target_id, edge_type, weight, ownership_percentage, effective_start, effective_end)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(source_id, target_id, edge_type, effective_start) DO UPDATE SET
+                    weight = excluded.weight,
+                    ownership_percentage = excluded.ownership_percentage,
+                    effective_end = excluded.effective_end
             """, (
                 edge.source_id,
                 edge.target_id,

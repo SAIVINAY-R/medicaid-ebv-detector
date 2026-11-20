@@ -40,7 +40,7 @@ class TestLayer1AndLayer2(unittest.TestCase):
             )
         )
         dec = self.l1_engine.evaluate_application(app)
-        self.assertEqual(dec.status, DecisionStatus.DENIED_GROUNDS)
+        self.assertEqual(dec.status, DecisionStatus.GROUNDS_PENDING_HUMAN_DECISION)
         self.assertFalse(dec.can_auto_approve)
         self.assertIn("42 CFR 455.416(c) - Tax ID sanctioned under exclusion list", dec.statutory_grounds)
 
@@ -91,6 +91,8 @@ class TestLayer1AndLayer2(unittest.TestCase):
         self.assertIn("Pattern requires", advisory.explanation_summary)
         self.assertGreater(advisory.priority_score, 20.0)
         self.assertTrue(len(advisory.recommended_review_actions) > 0)
+        # Verify strict mathematical consistency: sum of contributions == priority score
+        self.assertAlmostEqual(sum(advisory.feature_contributions.values()), advisory.priority_score, places=1)
 
     def test_worm_audit_chaining_and_sha256(self):
         app = ProviderApplication(
@@ -116,6 +118,8 @@ class TestLayer1AndLayer2(unittest.TestCase):
         )
         self.assertEqual(updated.reviewer_action, "REFERRED_TO_PI")
         self.assertEqual(updated.reviewer_notes, "Confirmed undisclosed holding company linkage.")
+        # Verify cryptographic audit chain integrity
+        self.assertTrue(self.audit_logger.verify_chain())
 
 
 if __name__ == "__main__":

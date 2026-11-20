@@ -40,6 +40,7 @@ def evaluate_address_rules(
     is_fatal = False
 
     # 1. Prohibited Address Types under DATA-039 / DT-SCR-GATE-002
+    norm_addr = address.normalized_single_line
     if address.is_cmra:
         evidence.append(EvidenceItem(
             code="L1-ADDR-CMRA-PROHIBITED",
@@ -47,7 +48,9 @@ def evaluate_address_rules(
             source_layer="LAYER_1",
             severity=EvidenceSeverity.CRITICAL,
             verified_fact=True,
-            details={"address": address.normalized_single_line}
+            fact_key=f"ADDR:{norm_addr}",
+            family="ADDRESS",
+            details={"address": norm_addr}
         ))
         is_fatal = True
 
@@ -58,7 +61,9 @@ def evaluate_address_rules(
             source_layer="LAYER_1",
             severity=EvidenceSeverity.CRITICAL,
             verified_fact=True,
-            details={"address": address.normalized_single_line}
+            fact_key=f"ADDR:{norm_addr}",
+            family="ADDRESS",
+            details={"address": norm_addr}
         ))
         is_fatal = True
 
@@ -69,7 +74,9 @@ def evaluate_address_rules(
             source_layer="LAYER_1",
             severity=EvidenceSeverity.HIGH,
             verified_fact=True,
-            details={"address": address.normalized_single_line}
+            fact_key=f"ADDR:{norm_addr}",
+            family="ADDRESS",
+            details={"address": norm_addr}
         ))
         is_fatal = True
 
@@ -85,6 +92,8 @@ def evaluate_address_rules(
             source_layer="LAYER_1",
             severity=EvidenceSeverity.CRITICAL,
             verified_fact=True,
+            fact_key=f"ADDR:{norm_addr}",
+            family="ADDRESS",
             details={"service_category": service_category, "rdi": address.rdi}
         ))
         is_fatal = True
@@ -97,7 +106,9 @@ def evaluate_address_rules(
             source_layer="M2_ADDRESS",
             severity=EvidenceSeverity.HIGH,
             verified_fact=True,
-            details={"address": address.normalized_single_line}
+            fact_key=f"ADDR:{norm_addr}",
+            family="ADDRESS",
+            details={"address": norm_addr}
         ))
 
     # 4. Delivery Point Validation (DPV) Failure
@@ -108,7 +119,9 @@ def evaluate_address_rules(
             source_layer="M2_ADDRESS",
             severity=EvidenceSeverity.MEDIUM,
             verified_fact=True,
-            details={"address": address.normalized_single_line}
+            fact_key=f"ADDR:{norm_addr}",
+            family="ADDRESS",
+            details={"address": norm_addr}
         ))
 
     return evidence, is_fatal

@@ -88,7 +88,7 @@ class TestAPIServer(unittest.TestCase):
             }
         }
         res = self.server.evaluate_enrollment(payload)
-        self.assertEqual(res["layer1_decision"]["status"], "DENIED_GROUNDS")
+        self.assertEqual(res["layer1_decision"]["status"], "GROUNDS_PENDING_HUMAN_DECISION")
         self.assertFalse(res["layer1_decision"]["can_auto_approve"])
         self.assertIn(res["advisory_score"]["composite_risk_level"], ("HIGH", "CRITICAL"))
 

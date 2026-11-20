@@ -146,14 +146,14 @@ class ProviderApplication:
     ground_truth_label: Optional[str] = None     # "EBV_FRAUD", "LEGITIMATE", for benchmarking only
 
     @property
-    def days_since_formation(self) -> int:
+    def days_since_formation(self) -> Optional[int]:
         """Calculate days between Secretary of State entity formation and application."""
         try:
             d_form = datetime.strptime(self.formation_date, "%Y-%m-%d").date()
             d_app = datetime.strptime(self.application_date, "%Y-%m-%d").date()
             return max(0, (d_app - d_form).days)
         except Exception:
-            return 999
+            return None
 
 
 @dataclass
@@ -167,6 +167,16 @@ class SeedRecord:
     effective_date: str
     end_date: Optional[str] = None
     jurisdiction: str = "US"          # "US" or state code
+
+    def is_active_on(self, date_str: str) -> bool:
+        """Check if seed sanction was active on a given date (e.g. application date)."""
+        if not date_str:
+            return True
+        if self.effective_date and self.effective_date > date_str:
+            return False
+        if self.end_date and self.end_date < date_str:
+            return False
+        return True
 
 
 @dataclass

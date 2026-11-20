@@ -17,6 +17,7 @@ class DecisionStatus(str, Enum):
     AUTO_APPROVE_ELIGIBLE = "AUTO_APPROVE_ELIGIBLE" # Passes all Layer 1 rules cleanly
     REVIEW_REQUIRED = "REVIEW_REQUIRED"             # Human reviewer must inspect
     REFERRED_TO_PI = "REFERRED_TO_PI"               # Escalated to Program Integrity
+    GROUNDS_PENDING_HUMAN_DECISION = "GROUNDS_PENDING_HUMAN_DECISION" # Statutory ground flagged pending human adverse action
     DENIED_GROUNDS = "DENIED_GROUNDS"               # Human confirmed 42 CFR 455.416 grounds
 
 
@@ -28,6 +29,8 @@ class EvidenceItem:
     source_layer: str                 # "LAYER_1", "M1_RESOLVER", "M2_ADDRESS", "M3_GRAPH", "M4_ANOMALY", "CHECKPOINT_2_CLAIMS"
     severity: EvidenceSeverity
     verified_fact: bool               # True if deterministic verified fact; False if statistical advisory
+    fact_key: Optional[str] = None    # Canonical fact identifier to collapse duplicate evidence items
+    family: Optional[str] = None      # Evidence family: "AFFILIATION", "OWNERSHIP", "ADDRESS", "SUBMISSION", "IDENTITY", "AGE"
     details: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -37,6 +40,8 @@ class EvidenceItem:
             "source_layer": self.source_layer,
             "severity": self.severity.value,
             "verified_fact": self.verified_fact,
+            "fact_key": self.fact_key,
+            "family": self.family,
             "details": self.details,
         }
 
@@ -53,6 +58,9 @@ class MatchResult:
     blocking_key_matched: str
     field_level_comparisons: Dict[str, float] = field(default_factory=dict)
     recommended_action: str = "NO_ACTION" # "AUTO_LINK", "SEND_TO_QUEUE", "DO_NOT_LINK"
+    num_fields_compared: int = 0
+    hard_conflict: bool = False
+    explanation: str = ""
 
 
 @dataclass
@@ -86,7 +94,12 @@ class Layer1Decision:
 
     @property
     def has_adverse_triggers(self) -> bool:
-        return len(self.statutory_grounds) > 0 or self.status in {DecisionStatus.REVIEW_REQUIRED, DecisionStatus.REFERRED_TO_PI}
+        return len(self.statutory_grounds) > 0 or self.status in {
+            DecisionStatus.REVIEW_REQUIRED,
+            DecisionStatus.REFERRED_TO_PI,
+            DecisionStatus.GROUNDS_PENDING_HUMAN_DECISION,
+            DecisionStatus.DENIED_GROUNDS
+        }
 
 
 @dataclass
@@ -113,6 +126,9 @@ class AuditRecord:
     layer1_status: str
     advisory_priority_score: float
     verified_fact_codes: List[str]
+    event_type: str = "SYSTEM_INFERENCE" # "SYSTEM_INFERENCE" or "REVIEWER_DECISION"
+    parent_record_id: Optional[str] = None
+    config_weights_sha256: str = ""
     reviewer_id: Optional[str] = None
     reviewer_action: Optional[str] = None # "APPROVED", "DENIED", "REFERRED", "VOIDED"
     reviewer_notes: Optional[str] = None

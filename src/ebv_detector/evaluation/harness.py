@@ -120,7 +120,11 @@ class EvaluationHarness:
             # Determine whether system flagged this provider as requiring adverse intervention
             # Flags: Layer 1 adverse status OR Advisory Risk Level HIGH/CRITICAL OR CP2 critical claims alert
             is_flagged = (
-                cp1_out.layer1_decision.status in (DecisionStatus.REVIEW_REQUIRED, DecisionStatus.DENIED_GROUNDS)
+                cp1_out.layer1_decision.status in (
+                    DecisionStatus.REVIEW_REQUIRED,
+                    DecisionStatus.DENIED_GROUNDS,
+                    DecisionStatus.GROUNDS_PENDING_HUMAN_DECISION
+                )
                 or cp1_out.advisory_score.composite_risk_level in ("HIGH", "CRITICAL")
                 or (cp2_out is not None and (cp2_out.trigger_unannounced_site_visit or cp2_out.trigger_payment_suspension))
             )

@@ -74,6 +74,7 @@ class FellegiSunterResolver:
             "legal_name": FieldWeightConfig(m_prob=0.92, u_prob=0.002),        # ~8.8 bits
             "address": FieldWeightConfig(m_prob=0.85, u_prob=0.005),           # ~7.4 bits
             "device_id": FieldWeightConfig(m_prob=0.90, u_prob=0.0002),        # ~12.1 bits
+            "disclosed_person": FieldWeightConfig(m_prob=0.85, u_prob=0.005),  # ~7.4 bits
         }
         
         # Prior probability of two random candidates being the same entity
@@ -127,6 +128,13 @@ class FellegiSunterResolver:
         """Compute field-level similarities, Fellegi-Sunter log-weight, and match status."""
         field_sims: Dict[str, float] = {}
         total_weight = 0.0
+        positive_weight = 0.0
+
+        def add_weight(w: float) -> None:
+            nonlocal total_weight, positive_weight
+            total_weight += w
+            if w > 0:
+                positive_weight += w
 
         # 1. Compare Legal / DBA Names
         name_sim = max(
@@ -134,9 +142,9 @@ class FellegiSunterResolver:
             token_set_similarity(app_a.legal_business_name, app_b.legal_business_name)
         )
         field_sims["legal_name"] = name_sim
-        total_weight += self.field_weights["legal_name"].calculate_weight(
+        add_weight(self.field_weights["legal_name"].calculate_weight(
             name_sim, self.config.jaro_winkler_high, self.config.jaro_winkler_med
-        )
+        ))
 
         # 2. Compare Addresses
         if app_a.primary_address and app_b.primary_address:
@@ -147,7 +155,7 @@ class FellegiSunterResolver:
                 levenshtein_similarity(addr_a, addr_b)
             )
             field_sims["address"] = addr_sim
-            total_weight += self.field_weights["address"].calculate_weight(addr_sim, 0.88, 0.70)
+            add_weight(self.field_weights["address"].calculate_weight(addr_sim, 0.88, 0.70))
 
         # 3. Compare Phones
         phone_a = clean_phone(app_a.phone)
@@ -155,13 +163,13 @@ class FellegiSunterResolver:
         if phone_a and phone_b:
             phone_sim = 1.0 if phone_a == phone_b else 0.0
             field_sims["phone"] = phone_sim
-            total_weight += self.field_weights["phone"].calculate_weight(phone_sim, 0.99, 0.50)
+            add_weight(self.field_weights["phone"].calculate_weight(phone_sim, 0.99, 0.50))
 
         # 4. Compare EFT Accounts
         if app_a.eft_account and app_b.eft_account:
             eft_match = 1.0 if app_a.eft_account.account_key == app_b.eft_account.account_key else 0.0
             field_sims["eft_account"] = eft_match
-            total_weight += self.field_weights["eft_account"].calculate_weight(eft_match, 0.99, 0.50)
+            add_weight(self.field_weights["eft_account"].calculate_weight(eft_match, 0.99, 0.50))
 
         # 5. Compare Disclosed Persons (SSN4 + DOB or Name)
         max_person_sim = 0.0
@@ -176,31 +184,104 @@ class FellegiSunterResolver:
 
         if exact_ssn4_dob_match:
             field_sims["ssn_last4_dob"] = 1.0
-            total_weight += self.field_weights["ssn_last4_dob"].agree_weight
-        else:
+            add_weight(self.field_weights["ssn_last4_dob"].agree_weight)
+        elif max_person_sim > 0.0:
             field_sims["disclosed_person_name"] = max_person_sim
+            add_weight(self.field_weights["disclosed_person"].calculate_weight(
+                max_person_sim, 0.90, 0.75
+            ))
 
         # 6. Compare Submission Device Fingerprint
         if app_a.device_fingerprint_id and app_b.device_fingerprint_id:
             dev_match = 1.0 if app_a.device_fingerprint_id == app_b.device_fingerprint_id else 0.0
             field_sims["device_id"] = dev_match
-            total_weight += self.field_weights["device_id"].calculate_weight(dev_match, 0.99, 0.50)
+            add_weight(self.field_weights["device_id"].calculate_weight(dev_match, 0.99, 0.50))
+
+        # 7. Compare NPI
+        npi_match = None
+        if app_a.npi and app_b.npi:
+            npi_match = 1.0 if app_a.npi.strip() == app_b.npi.strip() else 0.0
+            field_sims["npi"] = npi_match
+            add_weight(self.field_weights["npi"].calculate_weight(npi_match, 0.99, 0.50))
+
+        # 8. Compare TIN
+        tin_match = None
+        clean_tin_a = re.sub(r"\D", "", app_a.tin) if app_a.tin else ""
+        clean_tin_b = re.sub(r"\D", "", app_b.tin) if app_b.tin else ""
+        if clean_tin_a and clean_tin_b:
+            tin_match = 1.0 if clean_tin_a == clean_tin_b else 0.0
+            field_sims["tin"] = tin_match
+            add_weight(self.field_weights["tin"].calculate_weight(tin_match, 0.99, 0.50))
+
+        # Hard conflict & strong agreement checks:
+        hard_conflict = False
+        if npi_match == 0.0 or tin_match == 0.0:
+            hard_conflict = True
+
+        strong_agreements = 0
+        if npi_match == 1.0:
+            strong_agreements += 1
+        if tin_match == 1.0:
+            strong_agreements += 1
+        if app_a.eft_account and app_b.eft_account and field_sims.get("eft_account") == 1.0:
+            strong_agreements += 1
+        if exact_ssn4_dob_match:
+            strong_agreements += 1
+
+        num_fields_compared = len(field_sims)
 
         # Calibrated Bayes posterior probability
         # P(M|gamma) = P(M) * 2^W / [ P(M) * 2^W + (1 - P(M)) ]
         odds = (self.prior_match_prob / (1.0 - self.prior_match_prob)) * (2.0 ** total_weight)
         posterior_prob = min(0.9999, odds / (1.0 + odds))
 
-        is_match = total_weight >= self.config.match_threshold
-        is_near_match = (
-            self.config.near_match_threshold <= total_weight < self.config.match_threshold
+        # Determine match vs near match vs non match
+        # Auto-link requires total weight >= match threshold, no hard identifier conflict,
+        # and at least two agreeing strong identifiers (NPI, TIN, EFT, SSN4+DOB).
+        has_auto_link = (
+            total_weight >= self.config.match_threshold
+            and not hard_conflict
+            and strong_agreements >= 2
         )
+        
+        # Demote to near-match queue if candidate has high agreement weight but carries
+        # hard conflicts or insufficient strong identifiers, or if total weight is in near-match range.
+        has_near_match = (
+            not has_auto_link
+            and (
+                (self.config.near_match_threshold <= total_weight)
+                or (positive_weight >= self.config.match_threshold and (hard_conflict or strong_agreements < 2))
+            )
+        )
+
+        is_match = has_auto_link
+        is_near_match = has_near_match
 
         action = "DO_NOT_LINK"
         if is_match:
             action = "AUTO_LINK"
+            explanation = (
+                f"Auto-linked: {strong_agreements} strong identifiers agreed, "
+                f"weight={total_weight:.2f} >= {self.config.match_threshold} across {num_fields_compared} compared fields."
+            )
         elif is_near_match:
             action = "SEND_TO_QUEUE"
+            if hard_conflict:
+                explanation = (
+                    f"Sent to near-match queue: Hard identifier conflict detected (differing NPI/TIN), "
+                    f"weight={total_weight:.2f} across {num_fields_compared} compared fields."
+                )
+            elif strong_agreements < 2:
+                explanation = (
+                    f"Sent to near-match queue: Requires >=2 agreeing strong identifiers for auto-link ({strong_agreements} found), "
+                    f"weight={total_weight:.2f} across {num_fields_compared} compared fields."
+                )
+            else:
+                explanation = (
+                    f"Sent to near-match queue: Near-match weight={total_weight:.2f} across {num_fields_compared} compared fields."
+                )
+        else:
+            explanation = f"Do not link: weight={total_weight:.2f} < {self.config.near_match_threshold} across {num_fields_compared} compared fields."
 
         return MatchResult(
             candidate_id_a=app_a.application_id,
@@ -211,7 +292,10 @@ class FellegiSunterResolver:
             is_near_match=is_near_match,
             blocking_key_matched=matched_blocking_key,
             field_level_comparisons=field_sims,
-            recommended_action=action
+            recommended_action=action,
+            num_fields_compared=num_fields_compared,
+            hard_conflict=hard_conflict,
+            explanation=explanation,
         )
 
     def find_matches_in_cohort(

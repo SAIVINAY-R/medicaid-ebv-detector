@@ -11,7 +11,7 @@ Integrates:
 """
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from ..address.clustering import AddressClusterEngine
 from ..anomaly.application import ApplicationVelocityTracker
@@ -76,7 +76,7 @@ class Checkpoint1Pipeline:
         self.template_detector = MinHashTemplateDetector(self.config.anomaly)
         
         self.layer1_engine = Layer1RulesEngine(self.seeds, self.config)
-        self.layer2_engine = Layer2AdvisoryEngine()
+        self.layer2_engine = Layer2AdvisoryEngine(self.config)
         self.audit_logger = WormAuditLogger(self.config.model_version)
         
         # Internal application cohort
@@ -199,7 +199,8 @@ class Checkpoint1Pipeline:
 
         # Phone
         if app.phone:
-            phone_id = f"PHONE-{app.phone}"
+            clean_p = "".join(filter(str.isdigit, app.phone))
+            phone_id = f"PHONE-{clean_p or app.phone}"
             self.graph_store.add_node(GraphNode(
                 node_id=phone_id,
                 node_type=NodeType.PHONE,
@@ -210,6 +211,16 @@ class Checkpoint1Pipeline:
                 target_id=phone_id,
                 edge_type=EdgeType.USES_PHONE
             ))
+            # Check phone seed link (Item 3.7)
+            for s in self.seeds:
+                s_phone_clean = "".join(filter(str.isdigit, s.identifier_value))
+                if s.identifier_type == "PHONE" and (s.identifier_value == app.phone or (clean_p and clean_p == s_phone_clean)):
+                    seed_node_id = f"SEED-{s.identifier_type}-{s.identifier_value}"
+                    self.graph_store.add_edge(GraphEdge(
+                        source_id=phone_id,
+                        target_id=seed_node_id,
+                        edge_type=EdgeType.LINKED_SEED
+                    ))
 
         # Device
         if app.device_fingerprint_id:
@@ -292,7 +303,9 @@ class Checkpoint1Pipeline:
                     ),
                     source_layer="M1_RESOLVER",
                     severity=EvidenceSeverity.HIGH,
-                    verified_fact=True,
+                    verified_fact=False,
+                    fact_key=f"LINK:{m.candidate_id_b}",
+                    family="IDENTITY",
                     details=m.field_level_comparisons
                 ))
             elif m.is_near_match:
@@ -307,6 +320,8 @@ class Checkpoint1Pipeline:
                     source_layer="M1_RESOLVER",
                     severity=EvidenceSeverity.MEDIUM,
                     verified_fact=False,
+                    fact_key=f"NEAR_MATCH:{m.candidate_id_b}",
+                    family="IDENTITY",
                     details={"queue_item_id": q_item.item_id, "score": m.match_score}
                 ))
 
@@ -327,6 +342,8 @@ class Checkpoint1Pipeline:
                 source_layer="M3_GRAPH",
                 severity=EvidenceSeverity.CRITICAL if p.hops <= 2 else EvidenceSeverity.HIGH,
                 verified_fact=True,
+                fact_key=f"PATH_TO_SEED:{p.target_node_id}",
+                family="AFFILIATION",
                 details={"hops": p.hops, "seed_source": p.target_seed_source, "path": p.path_nodes}
             ))
 
@@ -345,6 +362,8 @@ class Checkpoint1Pipeline:
                 source_layer="M3_GRAPH",
                 severity=EvidenceSeverity.HIGH,
                 verified_fact=False,
+                fact_key="PPR:SEED_PROXIMITY",
+                family="AFFILIATION",
                 details={"ppr_score": ppr_score}
             ))
 
