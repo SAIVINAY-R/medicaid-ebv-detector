@@ -10,5 +10,5 @@ Modular, audit-compliant implementation covering:
 - WORM Audit Trail & Explainable Reviewer Evidence Panels
 """
 
-__version__ = "1.0.0-phase0"
+__version__ = "2.0.0"
 

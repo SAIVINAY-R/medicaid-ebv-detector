@@ -40,7 +40,7 @@ class Layer2AdvisoryEngine:
             return "AFFILIATION"
         return "SUBMISSION"
 
-    def _get_raw_weight(self, ev: EvidenceItem) -> float:
+    def _get_raw_weight(self, ev: EvidenceItem, app: Optional[ProviderApplication] = None) -> float:
         """Map evidence item to expert-calibrated relative weight."""
         code = ev.code.upper()
 
@@ -55,34 +55,45 @@ class Layer2AdvisoryEngine:
             return 5.0
         if "PHONE" in code and "SEED" in code:
             return 3.0
-        if code == "M3-GRAPH-PATH-TO-SEED":
-            hops = ev.details.get("shortest_path_hops", 1)
+        if code in ("M3-GRAPH-PATH-TO-SEED", "M3-GRAPH-PATH-TO-SANCTIONED-SEED"):
+            hops = ev.details.get("hops", ev.details.get("shortest_path_hops", 1))
             return 1.5 if hops >= 3 else 3.0
+        if "PPR" in code:
+            score = ev.details.get("ppr_score", 0.5)
+            return min(2.5, float(score) * 5.0)
+        if "MIGRATION" in code:
+            return 5.0
         if "CLINICIAN" in code:
             return 1.5
 
         # 2. Ownership family items
         if "INDIRECT-OWNERSHIP" in code:
             return 5.0
+        if "CRIMINAL-RECORD" in code:
+            return 3.0
         if "PARENT" in code:
             return 2.0
 
         # 3. Address family items
         if "SEED-ADDRESS" in code:
             return 4.0
-        if any(m in code for m in ["MAIL-DROP", "PO-BOX", "PMB"]):
+        if "HIGH-DENSITY" in code:
+            n_providers = ev.details.get("provider_count", 4)
+            return min(3.0, max(1.5, math.log2(max(2.0, float(n_providers)))))
+        if any(m in code for m in ["CMRA", "POBOX", "PO-BOX", "VIRTUAL", "PMB", "MAIL-DROP", "FACILITY-RESIDENTIAL"]):
+            return 3.0
+        if "ADDR-MISSING" in code:
             return 3.0
         if "VACANT" in code:
-            return 2.0
-        if "HIGH-DENSITY" in code:
             return 2.0
 
         # 4. Submission family items
         if "POLICY-CLONE" in code:
-            matching_count = ev.details.get("matching_apps_count", 1)
+            matching_count = ev.details.get("total_matching_applications", ev.details.get("matching_apps_count", 1))
             return min(4.0, 1.5 + math.log2(max(1.0, float(matching_count))))
         if any(v in code for v in ["DEVICE-SHARING", "IP-VELOCITY", "EMAIL-REUSE"]):
-            count = ev.details.get("recent_count", 1)
+            linked = ev.details.get("linked_applications", [])
+            count = ev.details.get("recent_count") or (len(linked) if isinstance(linked, list) else 1) or 1
             return min(4.0, 1.5 + math.log2(max(1.0, float(count))))
 
         # 5. Identity family items
@@ -94,6 +105,8 @@ class Layer2AdvisoryEngine:
 
         # 6. Age family items
         if "RAPID-FORMATION" in code:
+            if app and app.is_change_of_ownership:
+                return 0.0
             days = ev.details.get("days_since_formation", 7)
             if days is not None and days < 30:
                 return 1.5
@@ -144,18 +157,20 @@ class Layer2AdvisoryEngine:
         for ev in evidence_items:
             f_key = ev.fact_key or ev.code
             fam = (ev.family or self._infer_family(ev.code)).upper()
-            w = self._get_raw_weight(ev)
+            w = self._get_raw_weight(ev, app=app)
             if f_key not in facts_by_key or w > facts_by_key[f_key][1]:
                 facts_by_key[f_key] = (ev, w, fam)
 
         # 2. Check if direct graph path or direct seed match explains affiliation
         has_direct_affiliation = any(
-            fam == "AFFILIATION" and ("SEED" in ev.code or "GRAPH-PATH" in ev.code)
-            for ev, _, fam in facts_by_key.values()
+            fam == "AFFILIATION" and "PPR" not in ev.code and ("SEED" in ev.code or "GRAPH-PATH" in ev.code) and w > 0.0
+            for ev, w, fam in facts_by_key.values()
         )
 
-        # 3. Add PageRank risk points only when no direct path explains affiliation (Audit §3.2, §3.6)
-        if not has_direct_affiliation and ppr_risk_score > 0.0:
+        # 3. Suppress PageRank when explicit path explains affiliation; add only when no direct path explains it (Audit §3.2, §3.6)
+        if has_direct_affiliation:
+            facts_by_key.pop("PPR:SEED_PROXIMITY", None)
+        elif "PPR:SEED_PROXIMITY" not in facts_by_key and ppr_risk_score > 0.0:
             ppr_weight = min(2.5, ppr_risk_score * 5.0)
             ppr_ev = EvidenceItem(
                 code="M3-PPR-GRAPH-PROXIMITY",
@@ -169,10 +184,11 @@ class Layer2AdvisoryEngine:
             )
             facts_by_key["PPR:SEED_PROXIMITY"] = (ppr_ev, ppr_weight, "AFFILIATION")
 
-        # 4. Group unique facts by family and apply diminishing returns
+        # 4. Group unique non-zero-weight facts by family and apply diminishing returns
         family_weights: Dict[str, List[float]] = defaultdict(list)
         for ev, w, fam in facts_by_key.values():
-            family_weights[fam].append(w)
+            if w > 0.0:
+                family_weights[fam].append(w)
 
         capped_family_scores: Dict[str, float] = {}
         for fam, weights in family_weights.items():
@@ -182,7 +198,9 @@ class Layer2AdvisoryEngine:
                 factor = decay_factors[i] if i < len(decay_factors) else decay_factors[-1] * (0.5 ** (i - len(decay_factors) + 1))
                 fam_score += w * factor
             cap = family_caps.get(fam, 5.0)
-            capped_family_scores[fam] = min(cap, fam_score)
+            capped = min(cap, fam_score)
+            if capped > 0.0:
+                capped_family_scores[fam] = capped
 
         # 5. Saturating Score Transform: S = sum(capped_family_scores), priority = 100 * (1 - exp(-S / k))
         raw_s = sum(capped_family_scores.values())

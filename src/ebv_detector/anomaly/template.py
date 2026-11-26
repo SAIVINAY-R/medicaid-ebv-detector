@@ -32,6 +32,7 @@ class MinHashTemplateDetector:
         # Stored signatures: app_id -> List[minhash_ints]
         self._signatures: Dict[str, List[int]] = {}
         self._app_names: Dict[str, str] = {}
+        self._app_tins: Dict[str, str] = {}
 
     def _shingle_text(self, text: str, k: int = 3) -> Set[str]:
         """Convert text into normalized word k-shingles."""
@@ -76,6 +77,7 @@ class MinHashTemplateDetector:
             return []
 
         target_sig = self.compute_minhash_signature(app.policy_manual_text)
+        target_tin = re.sub(r"\D", "", app.tin or "")
         evidence: List[EvidenceItem] = []
 
         matching_apps = []
@@ -83,9 +85,12 @@ class MinHashTemplateDetector:
         best_match_id = None
         best_match_name = None
 
-        # Compare against existing signatures
+        # Compare against existing signatures (exclude same-TIN corporate multi-site sharing)
         for prior_app_id, prior_sig in self._signatures.items():
             if prior_app_id == app.application_id:
+                continue
+            prior_tin = self._app_tins.get(prior_app_id, "")
+            if target_tin and prior_tin and target_tin == prior_tin:
                 continue
 
             j_sim = self.estimate_jaccard_similarity(target_sig, prior_sig)
@@ -124,6 +129,7 @@ class MinHashTemplateDetector:
         # Store signature for future comparisons
         self._signatures[app.application_id] = target_sig
         self._app_names[app.application_id] = app.legal_business_name
+        self._app_tins[app.application_id] = target_tin
 
         return evidence
 

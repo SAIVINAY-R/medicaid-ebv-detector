@@ -87,11 +87,14 @@ class BillingRampDetector:
                 ),
                 source_layer="CHECKPOINT_2_CLAIMS",
                 severity=EvidenceSeverity.CRITICAL if robust_z > 6.0 else EvidenceSeverity.HIGH,
-                verified_fact=True,
+                verified_fact=False,
+                fact_key=f"RAMP:{provider_npi}",
+                family="SUBMISSION",
                 details={
                     "total_paid_30d": total_paid_30d,
                     "cohort_median": med,
                     "robust_z_score": round(robust_z, 2),
+                    "threshold_z": self.config.ramp_robust_z_threshold,
                     "months_enrolled": months_enrolled
                 }
             ))

@@ -11,6 +11,7 @@ Integrates:
 """
 
 from dataclasses import dataclass, field
+import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from ..address.clustering import AddressClusterEngine
@@ -77,7 +78,7 @@ class Checkpoint1Pipeline:
         
         self.layer1_engine = Layer1RulesEngine(self.seeds, self.config)
         self.layer2_engine = Layer2AdvisoryEngine(self.config)
-        self.audit_logger = WormAuditLogger(self.config.model_version)
+        self.audit_logger = WormAuditLogger(self.config.model_version, config=self.config)
         
         # Internal application cohort
         self._application_cohort: List[ProviderApplication] = []
@@ -96,7 +97,13 @@ class Checkpoint1Pipeline:
                 label=f"Seed: {s.identifier_type}={s.identifier_value}",
                 is_seed=True,
                 seed_source=s.source,
-                attributes={"reason": s.reason, "identifier_type": s.identifier_type, "value": s.identifier_value}
+                attributes={
+                    "reason": s.reason,
+                    "identifier_type": s.identifier_type,
+                    "value": s.identifier_value,
+                    "effective_date": s.effective_date,
+                    "end_date": s.end_date,
+                }
             ))
 
     def ingest_ownership_edges(self, edges: List[OwnershipEdge]):
@@ -142,6 +149,7 @@ class Checkpoint1Pipeline:
     def _sync_application_to_graph(self, app: ProviderApplication):
         """Map provider application entities and identifiers into graph store."""
         p_node_id = app.npi
+        app_eff_date = app.application_date or "2020-01-01"
         self.graph_store.add_node(GraphNode(
             node_id=p_node_id,
             node_type=NodeType.PROVIDER,
@@ -149,33 +157,55 @@ class Checkpoint1Pipeline:
             attributes={"npi": app.npi, "tin": app.tin, "service_category": app.service_category}
         ))
 
-        # Primary Address
+        # Direct TIN seed link if applicable
+        clean_tin = re.sub(r"\D", "", app.tin or "")
+        for s in self.seeds:
+            if s.identifier_type == "TIN":
+                s_clean_tin = re.sub(r"\D", "", s.identifier_value)
+                if clean_tin and s_clean_tin and clean_tin == s_clean_tin:
+                    self.graph_store.add_edge(GraphEdge(
+                        source_id=p_node_id,
+                        target_id=s.identifier_value,
+                        edge_type=EdgeType.LINKED_SEED,
+                        effective_start=s.effective_date,
+                        effective_end=s.end_date
+                    ))
+
+        # Primary Address & Secondary Practice Locations
+        all_addrs = []
         if app.primary_address:
-            addr_id = f"ADDR-{app.primary_address.normalized_single_line}"
+            all_addrs.append(app.primary_address)
+        all_addrs.extend(app.practice_locations or [])
+
+        for addr in all_addrs:
+            norm_addr = addr.normalized_single_line
+            addr_id = f"ADDR-{norm_addr}"
             self.graph_store.add_node(GraphNode(
                 node_id=addr_id,
                 node_type=NodeType.ADDRESS,
-                label=app.primary_address.address_line1,
-                attributes={"zip5": app.primary_address.zip5, "is_cmra": app.primary_address.is_cmra}
+                label=addr.address_line1,
+                attributes={"zip5": addr.zip5, "is_cmra": addr.is_cmra}
             ))
             self.graph_store.add_edge(GraphEdge(
                 source_id=p_node_id,
                 target_id=addr_id,
-                edge_type=EdgeType.USES_ADDRESS
+                edge_type=EdgeType.USES_ADDRESS,
+                effective_start=app_eff_date
             ))
             # Check if this address matches any known address seed
-            norm_addr = app.primary_address.normalized_single_line
             for s in self.seeds:
-                if s.identifier_type == "ADDRESS" and s.identifier_value.upper() == norm_addr:
+                if s.identifier_type == "ADDRESS" and s.identifier_value.strip().upper() == norm_addr:
                     seed_node_id = f"SEED-{s.identifier_type}-{s.identifier_value}"
                     self.graph_store.add_edge(GraphEdge(
                         source_id=addr_id,
                         target_id=seed_node_id,
-                        edge_type=EdgeType.LINKED_SEED
+                        edge_type=EdgeType.LINKED_SEED,
+                        effective_start=s.effective_date,
+                        effective_end=s.end_date
                     ))
 
-        # EFT Account
-        if app.eft_account:
+        # EFT Account (skip blank EFT placeholders)
+        if app.eft_account and app.eft_account.routing_number and app.eft_account.account_number:
             eft_id = f"EFT-{app.eft_account.account_key}"
             self.graph_store.add_node(GraphNode(
                 node_id=eft_id,
@@ -185,7 +215,8 @@ class Checkpoint1Pipeline:
             self.graph_store.add_edge(GraphEdge(
                 source_id=p_node_id,
                 target_id=eft_id,
-                edge_type=EdgeType.USES_EFT
+                edge_type=EdgeType.USES_EFT,
+                effective_start=app_eff_date
             ))
             # Check seed link
             for s in self.seeds:
@@ -194,7 +225,9 @@ class Checkpoint1Pipeline:
                     self.graph_store.add_edge(GraphEdge(
                         source_id=eft_id,
                         target_id=seed_node_id,
-                        edge_type=EdgeType.LINKED_SEED
+                        edge_type=EdgeType.LINKED_SEED,
+                        effective_start=s.effective_date,
+                        effective_end=s.end_date
                     ))
 
         # Phone
@@ -209,7 +242,8 @@ class Checkpoint1Pipeline:
             self.graph_store.add_edge(GraphEdge(
                 source_id=p_node_id,
                 target_id=phone_id,
-                edge_type=EdgeType.USES_PHONE
+                edge_type=EdgeType.USES_PHONE,
+                effective_start=app_eff_date
             ))
             # Check phone seed link (Item 3.7)
             for s in self.seeds:
@@ -219,8 +253,26 @@ class Checkpoint1Pipeline:
                     self.graph_store.add_edge(GraphEdge(
                         source_id=phone_id,
                         target_id=seed_node_id,
-                        edge_type=EdgeType.LINKED_SEED
+                        edge_type=EdgeType.LINKED_SEED,
+                        effective_start=s.effective_date,
+                        effective_end=s.end_date
                     ))
+
+        # Email
+        if app.email:
+            email_norm = app.email.strip().lower()
+            email_id = f"EMAIL-{email_norm}"
+            self.graph_store.add_node(GraphNode(
+                node_id=email_id,
+                node_type=NodeType.EMAIL,
+                label=email_norm
+            ))
+            self.graph_store.add_edge(GraphEdge(
+                source_id=p_node_id,
+                target_id=email_id,
+                edge_type=EdgeType.USES_EMAIL,
+                effective_start=app_eff_date
+            ))
 
         # Device
         if app.device_fingerprint_id:
@@ -233,7 +285,8 @@ class Checkpoint1Pipeline:
             self.graph_store.add_edge(GraphEdge(
                 source_id=p_node_id,
                 target_id=dev_id,
-                edge_type=EdgeType.SUBMITTED_FROM
+                edge_type=EdgeType.SUBMITTED_FROM,
+                effective_start=app_eff_date
             ))
 
         # Disclosed Persons
@@ -251,13 +304,15 @@ class Checkpoint1Pipeline:
                     source_id=person_id,
                     target_id=p_node_id,
                     edge_type=EdgeType.DIRECT_OWNERSHIP,
-                    ownership_percentage=person.direct_ownership_pct
+                    ownership_percentage=person.direct_ownership_pct,
+                    effective_start=app_eff_date
                 ))
             else:
                 self.graph_store.add_edge(GraphEdge(
                     source_id=person_id,
                     target_id=p_node_id,
-                    edge_type=EdgeType.MANAGING_EMPLOYEE
+                    edge_type=EdgeType.MANAGING_EMPLOYEE,
+                    effective_start=app_eff_date
                 ))
             # Seed link
             for s in self.seeds:
@@ -266,11 +321,15 @@ class Checkpoint1Pipeline:
                     self.graph_store.add_edge(GraphEdge(
                         source_id=person_id,
                         target_id=seed_node_id,
-                        edge_type=EdgeType.LINKED_SEED
+                        edge_type=EdgeType.LINKED_SEED,
+                        effective_start=s.effective_date,
+                        effective_end=s.end_date
                     ))
 
-        # Clinicians
-        for clin_npi in app.rendering_clinician_npis:
+        # Rendering & Supervising Clinicians
+        for clin_npi in (list(app.rendering_clinician_npis or []) + list(app.supervising_clinician_npis or [])):
+            if not clin_npi:
+                continue
             c_id = f"CLINICIAN-{clin_npi}"
             self.graph_store.add_node(GraphNode(
                 node_id=c_id,
@@ -280,7 +339,8 @@ class Checkpoint1Pipeline:
             self.graph_store.add_edge(GraphEdge(
                 source_id=c_id,
                 target_id=p_node_id,
-                edge_type=EdgeType.CLINICIAN
+                edge_type=EdgeType.CLINICIAN,
+                effective_start=app_eff_date
             ))
 
     def evaluate_application(self, app: ProviderApplication) -> Checkpoint1EvaluationPackage:
@@ -306,7 +366,11 @@ class Checkpoint1Pipeline:
                     verified_fact=False,
                     fact_key=f"LINK:{m.candidate_id_b}",
                     family="IDENTITY",
-                    details=m.field_level_comparisons
+                    details={
+                        "posterior_prob": m.posterior_prob,
+                        "match_score": m.match_score,
+                        "field_comparisons": m.field_level_comparisons,
+                    }
                 ))
             elif m.is_near_match:
                 q_item = self.near_match_queue.enqueue(m)
@@ -330,9 +394,22 @@ class Checkpoint1Pipeline:
         collected_evidence.extend(density_evidence)
         self.address_cluster_engine.register_provider(app)
 
-        # 4. M3 Graph Traversal: Paths to Seeds & GR-4 Indirect Ownership
-        paths_to_seeds = self.graph_traversal.find_paths_to_seeds(app.npi)
+        # 4. M3 Graph Traversal: Paths to Seeds & GR-4 Indirect Ownership (point-in-time filtered)
+        paths_to_seeds = self.graph_traversal.find_paths_to_seeds(app.npi, as_of_date=app.application_date)
         for p in paths_to_seeds:
+            # Share canonical fact_key when path goes directly through a shared Layer-1 identifier node
+            canonical_key = f"PATH_TO_SEED:{p.target_node_id}"
+            if p.hops == 2 and len(p.path_nodes) >= 2:
+                mid = p.path_nodes[1]
+                if mid.startswith("EFT-"):
+                    canonical_key = f"EFT:{mid[4:].upper()}"
+                elif mid.startswith("PHONE-"):
+                    canonical_key = f"PHONE:{mid[6:]}"
+                elif mid.startswith("ADDR-"):
+                    canonical_key = f"ADDR:{mid[5:].upper()}"
+                elif mid.startswith("PERSON-"):
+                    canonical_key = f"PERSON:{mid[7:].upper()}"
+
             collected_evidence.append(EvidenceItem(
                 code="M3-GRAPH-PATH-TO-SANCTIONED-SEED",
                 description=(
@@ -342,17 +419,19 @@ class Checkpoint1Pipeline:
                 source_layer="M3_GRAPH",
                 severity=EvidenceSeverity.CRITICAL if p.hops <= 2 else EvidenceSeverity.HIGH,
                 verified_fact=True,
-                fact_key=f"PATH_TO_SEED:{p.target_node_id}",
+                fact_key=canonical_key,
                 family="AFFILIATION",
                 details={"hops": p.hops, "seed_source": p.target_seed_source, "path": p.path_nodes}
             ))
 
-        indirect_ownership = self.graph_traversal.calculate_gr4_indirect_ownership(app.npi)
+        indirect_ownership = self.graph_traversal.calculate_gr4_indirect_ownership(
+            app.npi, as_of_date=app.application_date
+        )
 
-        # 4b. Personalized PageRank Risk Propagation
+        # 4b. Personalized PageRank Risk Propagation (only emit alert when no direct seed path explains it)
         ppr_scores = self.seed_propagator.compute_personalized_pagerank()
         ppr_score = self.seed_propagator.get_risk_score(app.npi, ppr_scores)
-        if ppr_score >= self.config.graph.ppr_alert_threshold:
+        if not paths_to_seeds and ppr_score >= self.config.graph.ppr_alert_threshold:
             collected_evidence.append(EvidenceItem(
                 code="M3-PPR-SEED-PROXIMITY-ALERT",
                 description=(
@@ -397,7 +476,8 @@ class Checkpoint1Pipeline:
             advisory_score=advisory_score
         )
 
-        # Add application to internal cohort for future comparisons
+        # Upsert application in internal cohort for future comparisons without duplicates
+        self._application_cohort = [a for a in self._application_cohort if a.application_id != app.application_id]
         self._application_cohort.append(app)
 
         return Checkpoint1EvaluationPackage(

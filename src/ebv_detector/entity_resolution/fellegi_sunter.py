@@ -166,7 +166,9 @@ class FellegiSunterResolver:
             add_weight(self.field_weights["phone"].calculate_weight(phone_sim, 0.99, 0.50))
 
         # 4. Compare EFT Accounts
-        if app_a.eft_account and app_b.eft_account:
+        eft_a_valid = bool(app_a.eft_account and app_a.eft_account.routing_number and app_a.eft_account.account_number)
+        eft_b_valid = bool(app_b.eft_account and app_b.eft_account.routing_number and app_b.eft_account.account_number)
+        if eft_a_valid and eft_b_valid:
             eft_match = 1.0 if app_a.eft_account.account_key == app_b.eft_account.account_key else 0.0
             field_sims["eft_account"] = eft_match
             add_weight(self.field_weights["eft_account"].calculate_weight(eft_match, 0.99, 0.50))
@@ -230,9 +232,10 @@ class FellegiSunterResolver:
 
         num_fields_compared = len(field_sims)
 
-        # Calibrated Bayes posterior probability
+        # Calibrated Bayes posterior probability (clamped exponent to prevent float64 overflow)
         # P(M|gamma) = P(M) * 2^W / [ P(M) * 2^W + (1 - P(M)) ]
-        odds = (self.prior_match_prob / (1.0 - self.prior_match_prob)) * (2.0 ** total_weight)
+        clamped_w = max(-100.0, min(100.0, total_weight))
+        odds = (self.prior_match_prob / (1.0 - self.prior_match_prob)) * (2.0 ** clamped_w)
         posterior_prob = min(0.9999, odds / (1.0 + odds))
 
         # Determine match vs near match vs non match

@@ -48,12 +48,29 @@ class GraphTraversalEngine:
         self.store = store
         self.max_hops = max_hops
 
-    def find_paths_to_seeds(self, start_node_id: str) -> List[PathResult]:
+    def _is_seed_active(self, node, as_of_date: Optional[str]) -> bool:
+        """Verify seed effective/end dates when as_of_date filtering is requested."""
+        if not node or not node.is_seed:
+            return False
+        if not as_of_date:
+            return True
+        eff = node.attributes.get("effective_date")
+        end = node.attributes.get("end_date")
+        if eff and eff > as_of_date:
+            return False
+        if end and end < as_of_date:
+            return False
+        return True
+
+    def find_paths_to_seeds(
+        self, start_node_id: str, as_of_date: Optional[str] = None
+    ) -> List[PathResult]:
         """Find all paths from start_node_id to any known-bad seed within max_hops using Recursive CTE."""
         with self.store.lock:
             cur = self.store.conn.cursor()
             
-            # SQLite recursive CTE traversing undirected edges up to max_hops
+            # SQLite recursive CTE traversing undirected edges up to max_hops with delimiter-safe cycle check
+            # and optional point-in-time date filtering.
             query = """
             WITH RECURSIVE traversal_cte(current_id, path_str, hops) AS (
                 -- Base case
@@ -66,7 +83,8 @@ class GraphTraversalEngine:
                 FROM traversal_cte t
                 JOIN graph_edges e ON t.current_id = e.source_id
                 WHERE t.hops < ?
-                  AND instr(t.path_str, e.target_id) = 0
+                  AND instr('->' || t.path_str || '->', '->' || e.target_id || '->') = 0
+                  AND (? IS NULL OR (e.effective_start <= ? AND (e.effective_end IS NULL OR e.effective_end >= ?)))
                 
                 UNION ALL
                 
@@ -75,7 +93,8 @@ class GraphTraversalEngine:
                 FROM traversal_cte t
                 JOIN graph_edges e ON t.current_id = e.target_id
                 WHERE t.hops < ?
-                  AND instr(t.path_str, e.source_id) = 0
+                  AND instr('->' || t.path_str || '->', '->' || e.source_id || '->') = 0
+                  AND (? IS NULL OR (e.effective_start <= ? AND (e.effective_end IS NULL OR e.effective_end >= ?)))
             )
             SELECT 
                 t.current_id,
@@ -90,7 +109,13 @@ class GraphTraversalEngine:
             ORDER BY t.hops ASC;
             """
             
-            cur.execute(query, (start_node_id, start_node_id, self.max_hops, self.max_hops, start_node_id))
+            params = (
+                start_node_id, start_node_id,
+                self.max_hops, as_of_date, as_of_date, as_of_date,
+                self.max_hops, as_of_date, as_of_date, as_of_date,
+                start_node_id
+            )
+            cur.execute(query, params)
             rows = cur.fetchall()
         
         results = []
@@ -100,12 +125,15 @@ class GraphTraversalEngine:
             target_id = r["current_id"]
             if target_id in seen_targets:
                 continue
+
+            seed_node = self.store.get_node(target_id)
+            if not self._is_seed_active(seed_node, as_of_date):
+                continue
+
             seen_targets.add(target_id)
             
             node_seq = r["path_str"].split("->")
             desc = self._format_path_description(node_seq)
-            
-            seed_node = self.store.get_node(target_id)
             reason = seed_node.attributes.get("reason") if seed_node else None
             
             results.append(PathResult(
@@ -130,7 +158,9 @@ class GraphTraversalEngine:
             labels.append(label)
         return " -> ".join(labels)
 
-    def calculate_gr4_indirect_ownership(self, target_provider_id: str) -> List[IndirectOwnershipResult]:
+    def calculate_gr4_indirect_ownership(
+        self, target_provider_id: str, as_of_date: Optional[str] = None
+    ) -> List[IndirectOwnershipResult]:
         """Calculate indirect ownership for target_provider_id along ownership chains (GR-4).
         
         Multiplies ownership percentages along directed ownership chains:
@@ -154,6 +184,7 @@ class GraphTraversalEngine:
                 WHERE target_id = ? 
                   AND edge_type = 'DIRECT_OWNERSHIP'
                   AND ownership_percentage > 0.0
+                  AND (? IS NULL OR (effective_start <= ? AND (effective_end IS NULL OR effective_end >= ?)))
                   
                 UNION ALL
                 
@@ -169,14 +200,20 @@ class GraphTraversalEngine:
                 WHERE e.edge_type = 'DIRECT_OWNERSHIP'
                   AND e.ownership_percentage > 0.0
                   AND o.depth < 5
-                  AND instr(o.path_str, e.source_id) = 0
+                  AND instr('->' || o.path_str || '->', '->' || e.source_id || '->') = 0
+                  AND (? IS NULL OR (e.effective_start <= ? AND (e.effective_end IS NULL OR e.effective_end >= ?)))
             )
             SELECT upstream_id, cumulative_pct, path_str, depth
             FROM ownership_cte
             ORDER BY depth ASC;
             """
             
-            cur.execute(query, (target_provider_id,))
+            params = (
+                target_provider_id,
+                as_of_date, as_of_date, as_of_date,
+                as_of_date, as_of_date, as_of_date,
+            )
+            cur.execute(query, params)
             rows = cur.fetchall()
             
             # Aggregate cumulative percentages per upstream entity (in case of multiple paths)
@@ -193,16 +230,17 @@ class GraphTraversalEngine:
             results = []
             for upstream_id, total_pct in entity_totals.items():
                 node = self.store.get_node(upstream_id)
-                is_seed = node.is_seed if node else False
-                seed_reason = node.attributes.get("reason") if node else None
+                is_seed = self._is_seed_active(node, as_of_date) if node else False
+                seed_reason = node.attributes.get("reason") if (node and is_seed) else None
                 
                 # Statutory threshold: 5% (0.05)
-                meets_5pct = total_pct >= 0.05
+                clamped_pct = min(1.0, round(total_pct, 4))
+                meets_5pct = clamped_pct >= 0.05
                 
                 results.append(IndirectOwnershipResult(
                     upstream_entity_id=upstream_id,
                     downstream_provider_id=target_provider_id,
-                    effective_indirect_pct=round(total_pct, 4),
+                    effective_indirect_pct=clamped_pct,
                     meets_5pct_statutory_threshold=meets_5pct,
                     is_upstream_excluded_seed=is_seed,
                     seed_reason=seed_reason,

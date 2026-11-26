@@ -31,6 +31,8 @@ def evaluate_address_rules(
             source_layer="LAYER_1",
             severity=EvidenceSeverity.CRITICAL,
             verified_fact=True,
+            fact_key="ADDR:MISSING",
+            family="ADDRESS",
             details={"service_category": service_category}
         )
         return [item], True

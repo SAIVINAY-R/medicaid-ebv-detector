@@ -145,6 +145,6 @@ class SystemConfig:
     scoring: ScoringConfig = field(default_factory=ScoringConfig)
     
     # System metadata
-    model_version: str = "v1.0.0-phase0"
+    model_version: str = "v2.0.0"
     wORM_audit_enabled: bool = True
 

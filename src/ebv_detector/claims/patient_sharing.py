@@ -21,6 +21,8 @@ class PatientMigrationDetector:
         self.config = config or ClaimsSignalConfig()
         # provider_npi -> set of beneficiary_ids
         self._provider_patients: Dict[str, Set[str]] = defaultdict(set)
+        # provider_npi -> (min_service_date, max_service_date)
+        self._provider_date_bounds: Dict[str, List[str]] = {}
         # known suspended or terminated provider NPIs
         self._sanctioned_providers: Set[str] = set()
 
@@ -32,6 +34,15 @@ class PatientMigrationDetector:
         """Populate provider-patient bipartite associations from claims data."""
         for c in claims:
             self._provider_patients[c.billing_provider_npi].add(c.beneficiary_id)
+            if c.service_date:
+                bounds = self._provider_date_bounds.get(c.billing_provider_npi)
+                if not bounds:
+                    self._provider_date_bounds[c.billing_provider_npi] = [c.service_date, c.service_date]
+                else:
+                    if c.service_date < bounds[0]:
+                        bounds[0] = c.service_date
+                    if c.service_date > bounds[1]:
+                        bounds[1] = c.service_date
 
     def evaluate_patient_migration(self, target_provider_npi: str) -> List[EvidenceItem]:
         """Check if target provider's patients were transferred en masse from a sanctioned provider."""
@@ -40,6 +51,7 @@ class PatientMigrationDetector:
             return []
 
         evidence: List[EvidenceItem] = []
+        target_bounds = self._provider_date_bounds.get(target_provider_npi)
 
         for sanctioned_npi in self._sanctioned_providers:
             if sanctioned_npi == target_provider_npi:
@@ -47,6 +59,12 @@ class PatientMigrationDetector:
 
             sanctioned_patients = self._provider_patients.get(sanctioned_npi, set())
             if not sanctioned_patients:
+                continue
+
+            # Require plausible migration ordering when dates are available
+            # (sanctioned provider's earliest claim must not strictly post-date target's latest claim)
+            sanc_bounds = self._provider_date_bounds.get(sanctioned_npi)
+            if sanc_bounds and target_bounds and sanc_bounds[0] > target_bounds[1]:
                 continue
 
             shared_patients = target_patients & sanctioned_patients
@@ -68,12 +86,16 @@ class PatientMigrationDetector:
                     ),
                     source_layer="CHECKPOINT_2_CLAIMS",
                     severity=EvidenceSeverity.CRITICAL,
-                    verified_fact=True,
+                    verified_fact=False,
+                    fact_key=f"MIGRATION:{sanctioned_npi}",
+                    family="AFFILIATION",
                     details={
                         "sanctioned_provider_npi": sanctioned_npi,
                         "shared_patient_count": len(shared_patients),
                         "total_target_patients": len(target_patients),
                         "jaccard_similarity": round(jaccard, 3),
+                        "threshold_jaccard": self.config.patient_migration_jaccard_threshold,
+                        "threshold_count": self.config.patient_migration_min_count,
                         "sample_patient_ids": list(shared_patients)[:5]
                     }
                 ))

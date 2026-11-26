@@ -11,6 +11,7 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 import sys
 import traceback
 from typing import Any, Dict, List, Optional
@@ -193,6 +194,10 @@ class EBVRequestHandler(BaseHTTPRequestHandler):
             self._send_json_response(400, {"error": f"Invalid JSON payload: {str(e)}"})
             return
 
+        if not isinstance(body, dict):
+            self._send_json_response(400, {"error": "JSON request body must be an object."})
+            return
+
         if path == "/api/evaluate/enrollment":
             try:
                 res = self.server_instance.evaluate_enrollment(body)
@@ -212,12 +217,19 @@ class EBVRequestHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/db/query":
-            sql = (body.get("query") or body.get("sql") or "").strip()
+            sql = (body.get("query") or body.get("sql") or "").strip().rstrip(";").strip()
             if not sql:
                 self._send_json_response(400, {"error": "Missing 'sql' query parameter in request body."})
                 return
-            if not sql.upper().startswith("SELECT"):
-                self._send_json_response(403, {"error": "Only read-only SELECT queries are permitted."})
+            is_read_prefix = bool(re.match(r"^(SELECT|WITH)\b", sql, re.IGNORECASE))
+            has_semicolon = ";" in sql
+            has_write_kw = bool(re.search(
+                r"\b(INSERT|UPDATE|DELETE|DROP|ALTER|ATTACH|DETACH|CREATE|REPLACE|PRAGMA|VACUUM)\b",
+                sql,
+                re.IGNORECASE
+            ))
+            if not is_read_prefix or has_semicolon or has_write_kw:
+                self._send_json_response(403, {"error": "Only single-statement read-only SELECT or WITH queries are permitted."})
                 return
             try:
                 with self.server_instance.cp1.graph_store.lock:
@@ -259,6 +271,8 @@ class EBVRequestHandler(BaseHTTPRequestHandler):
                     "chain_valid": chain_valid,
                     "audit_hash": new_rec.audit_hash
                 })
+            except KeyError as e:
+                self._send_json_response(404, {"error": str(e)})
             except Exception as e:
                 traceback.print_exc(file=sys.stderr)
                 self._send_json_response(500, {"error": f"Override error: {str(e)}"})
@@ -400,36 +414,45 @@ class EBVServer:
 
     def evaluate_enrollment(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Process enrollment screening application through Checkpoint 1."""
-        addr_data = payload.get("primary_address", {})
-        addr = AddressRecord(
-            address_line1=addr_data.get("address_line1", ""),
-            address_line2=addr_data.get("address_line2"),
-            city=addr_data.get("city", "Raleigh"),
-            state=addr_data.get("state", "NC"),
-            zip5=addr_data.get("zip5", "27601"),
-            is_cmra=bool(addr_data.get("is_cmra", False)),
-            is_po_box=bool(addr_data.get("is_po_box", False)),
-            is_virtual_mailbox=bool(addr_data.get("is_virtual_mailbox", False)),
-            is_pmb=bool(addr_data.get("is_pmb", False)),
-            rdi=addr_data.get("rdi", "COMMERCIAL")
-        )
+        raw_addr = payload.get("primary_address")
+        addr = None
+        if isinstance(raw_addr, dict) and any(
+            raw_addr.get(k) for k in ("address_line1", "city", "zip5", "is_cmra", "is_po_box", "is_virtual_mailbox", "is_pmb")
+        ):
+            addr = AddressRecord(
+                address_line1=str(raw_addr.get("address_line1") or "").strip(),
+                address_line2=raw_addr.get("address_line2"),
+                city=str(raw_addr.get("city") or "Raleigh").strip(),
+                state=str(raw_addr.get("state") or "NC").strip(),
+                zip5=str(raw_addr.get("zip5") or "27601").strip(),
+                is_cmra=bool(raw_addr.get("is_cmra", False)),
+                is_po_box=bool(raw_addr.get("is_po_box", False)),
+                is_virtual_mailbox=bool(raw_addr.get("is_virtual_mailbox", False)),
+                is_pmb=bool(raw_addr.get("is_pmb", False)),
+                is_vacant=bool(raw_addr.get("is_vacant", False)),
+                dpv_valid=bool(raw_addr.get("dpv_valid", True)),
+                rdi=str(raw_addr.get("rdi") or "COMMERCIAL").strip()
+            )
 
-        eft_data = payload.get("eft_account", {})
-        eft = EFTAccount(
-            routing_number=eft_data.get("routing_number", ""),
-            account_number=eft_data.get("account_number", "")
-        )
+        raw_eft = payload.get("eft_account")
+        eft = None
+        if isinstance(raw_eft, dict):
+            routing = str(raw_eft.get("routing_number") or "").strip()
+            acct = str(raw_eft.get("account_number") or "").strip()
+            if routing or acct:
+                eft = EFTAccount(routing_number=routing, account_number=acct)
 
         persons = []
-        for p in payload.get("disclosed_persons", []):
-            if isinstance(p, dict):
+        for p in (payload.get("disclosed_persons") or []):
+            if isinstance(p, dict) and any(p.get(k) for k in ("first_name", "last_name", "ssn_last4")):
                 persons.append(PersonDisclosure(
-                    first_name=p.get("first_name") or "Victor",
-                    last_name=p.get("last_name") or "Vanish",
-                    ssn_last4=str(p.get("ssn_last4") or "4912"),
-                    date_of_birth=str(p.get("date_of_birth") or "1992-04-18"),
-                    role=p.get("role") or "OWNER",
-                    direct_ownership_pct=safe_float(p.get("direct_ownership_pct"), 1.0)
+                    first_name=str(p.get("first_name") or "").strip(),
+                    last_name=str(p.get("last_name") or "").strip(),
+                    ssn_last4=str(p.get("ssn_last4") or "").strip(),
+                    date_of_birth=str(p.get("date_of_birth") or "").strip(),
+                    role=str(p.get("role") or "OWNER").strip(),
+                    direct_ownership_pct=safe_float(p.get("direct_ownership_pct"), 1.0),
+                    has_criminal_record_disclosed=bool(p.get("has_criminal_record_disclosed", False))
                 ))
 
         npi = str(payload.get("npi") or "1900000001").strip()
@@ -437,23 +460,31 @@ class EBVServer:
         app = ProviderApplication(
             application_id=app_id,
             npi=npi,
-            legal_business_name=payload.get("legal_business_name") or "Sample Healthcare LLC",
-            tin=str(payload.get("tin") or "56-1234567"),
-            service_category=payload.get("service_category") or "BEHAVIORAL_HEALTH",
-            formation_date=payload.get("formation_date") or "2026-01-01",
-            application_date=payload.get("application_date") or "2026-02-01",
-            phone=payload.get("phone") or "919-555-8822",
+            legal_business_name=str(payload.get("legal_business_name") or "Sample Healthcare LLC").strip(),
+            tin=str(payload.get("tin") or "56-1234567").strip(),
+            service_category=str(payload.get("service_category") or "BEHAVIORAL_HEALTH").strip(),
+            formation_date=str(payload.get("formation_date") or "2026-01-01").strip(),
+            application_date=str(payload.get("application_date") or "2026-02-01").strip(),
+            phone=str(payload.get("phone") or "").strip(),
+            email=str(payload.get("email") or "").strip(),
             primary_address=addr,
             eft_account=eft,
             disclosed_persons=persons,
-            device_fingerprint_id=payload.get("device_fingerprint_id"),
-            policy_manual_text=payload.get("policy_manual_text")
+            device_fingerprint_id=payload.get("device_fingerprint_id") or None,
+            submission_ip_address=payload.get("submission_ip_address") or None,
+            policy_manual_text=payload.get("policy_manual_text"),
+            prior_termination_disclosed=bool(payload.get("prior_termination_disclosed", False)),
+            is_change_of_ownership=bool(payload.get("is_change_of_ownership", False)),
+            prior_enrolled_npi=payload.get("prior_enrolled_npi") or None,
         )
 
-        # Handle GR-4 Upstream Corporate Hierarchy if provided
+        # Handle GR-4 Upstream Corporate Hierarchy if provided (normalize >1.0 percentages like 60 -> 0.60)
         holding_org_id = payload.get("holding_org_id")
         upstream_owner_id = payload.get("upstream_owner_id")
         upstream_pct = safe_float(payload.get("upstream_pct"), 0.0)
+        if upstream_pct > 1.0:
+            upstream_pct = upstream_pct / 100.0
+        upstream_pct = max(0.0, min(1.0, upstream_pct))
 
         if holding_org_id and upstream_owner_id and upstream_pct > 0.0:
             edge1 = OwnershipEdge(
@@ -518,30 +549,39 @@ class EBVServer:
     def evaluate_claims(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Simulate claims surveillance through Checkpoint 2."""
         npi = str(payload.get("npi") or "1900000056").strip()
-        service_cat = payload.get("service_category") or "BEHAVIORAL_HEALTH"
-        months = safe_int(payload.get("months_enrolled"), 3)
-        paid = safe_float(payload.get("total_paid_30d"), 186000.0)
-        max_hrs = safe_float(payload.get("max_daily_hours"), 36.0)
-        inpat = safe_int(payload.get("inpatient_overlaps"), 3)
-        post = safe_int(payload.get("post_mortem_claims"), 2)
-        migrating = safe_int(payload.get("migrating_patients"), 30)
+        service_cat = str(payload.get("service_category") or "BEHAVIORAL_HEALTH").strip()
+        months = max(1, safe_int(payload.get("months_enrolled"), 3))
+        paid = max(0.0, safe_float(payload.get("total_paid_30d"), 186000.0))
+        max_hrs = max(0.0, safe_float(payload.get("max_daily_hours"), 36.0))
+        inpat = max(0, safe_int(payload.get("inpatient_overlaps"), 3))
+        post = max(0, safe_int(payload.get("post_mortem_claims"), 2))
+        migrating = max(0, safe_int(payload.get("migrating_patients"), 30))
 
         # Synthetic claims generation for surveillance evaluation
         claims = []
         num_claims = 20
-        per_claim_paid = paid / num_claims
+        total_target_claims = num_claims + migrating
+        per_claim_paid = (paid / total_target_claims) if total_target_claims > 0 else 0.0
 
         for i in range(num_claims):
             is_inpatient = (i < inpat)
             is_post_mortem = (i < post)
-            hours = (max_hrs / 3.0) if i < 3 else 2.0
+            # First 3 claims land on peak day 2026-03-15 totaling exact max_hrs;
+            # remaining claims spread cleanly across days 1..14 so clean workdays (<=24h) don't falsely spike.
+            if i < 3:
+                s_date = "2026-03-15"
+                hours = max_hrs / 3.0
+            else:
+                day_num = ((i - 3) % 14) + 1
+                s_date = f"2026-03-{day_num:02d}"
+                hours = 2.0
 
             claims.append(ClaimRecord(
                 claim_id=f"CLM-SIM-{i:03d}",
                 billing_provider_npi=npi,
                 rendering_clinician_npi=f"CLIN-{npi[-4:]}",
                 beneficiary_id=f"BEN-SIM-{i:03d}",
-                service_date="2026-03-15",
+                service_date=s_date,
                 procedure_code="H0015",
                 units_billed=hours * 4.0,
                 paid_amount=per_claim_paid,
@@ -602,6 +642,7 @@ class EBVServer:
                 "cohort_median_paid_30d": sig.ramp_result.cohort_median_paid_30d,
                 "robust_z_score": sig.ramp_result.robust_z_score,
                 "is_ramp_anomaly": sig.ramp_result.is_ramp_anomaly,
+                "cusum_alarm": sig.ramp_result.cusum_alarm,
                 "impossible_hours_count": sig.ramp_result.impossible_hours_count,
                 "inpatient_overlap_count": sig.ramp_result.inpatient_overlap_count,
                 "deceased_overlap_count": sig.ramp_result.deceased_overlap_count

@@ -77,7 +77,13 @@ class Checkpoint2Pipeline:
         trigger_suspension = False
         action = "CONTINUE_STANDARD_MONITORING"
 
-        if ramp_res.impossible_hours_count > 0 or ramp_res.deceased_overlap_count > 0 or len(migration_evidence) > 0:
+        if (
+            has_critical
+            or ramp_res.impossible_hours_count > 0
+            or ramp_res.inpatient_overlap_count > 0
+            or ramp_res.deceased_overlap_count > 0
+            or len(migration_evidence) > 0
+        ):
             action = "CREDIBLE_ALLEGATION_OF_FRAUD_REFERRAL (42 CFR 455.23 Payment Suspension Evaluation)"
             trigger_suspension = True
             trigger_site_visit = True

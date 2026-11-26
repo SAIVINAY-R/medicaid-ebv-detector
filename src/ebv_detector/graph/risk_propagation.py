@@ -53,16 +53,21 @@ class SeedRiskPropagator:
             for nid in all_nodes
         }
 
-        # Build adjacency graph with supernode-damped weights
+        # Pre-compute supernodes once per pass instead of querying DB per edge
+        self.supernode_mgr.scan_for_supernodes()
+
+        # Build adjacency graph with supernode-damped weights (accumulate multi-edges, skip self-loops)
         adj: Dict[str, Dict[str, float]] = defaultdict(dict)
         with self.store.lock:
             cur = self.store.conn.cursor()
             cur.execute("SELECT source_id, target_id, weight FROM graph_edges")
             for r in cur.fetchall():
                 u, v, base_w = r["source_id"], r["target_id"], r["weight"]
+                if u == v:
+                    continue
                 eff_w = self.supernode_mgr.get_effective_edge_weight(u, v, base_w)
-                adj[u][v] = eff_w
-                adj[v][u] = eff_w
+                adj[u][v] = adj[u].get(v, 0.0) + eff_w
+                adj[v][u] = adj[v].get(u, 0.0) + eff_w
 
         # Compute out-degree total weights for transition probability
         out_weight_sum: Dict[str, float] = {}
@@ -75,8 +80,9 @@ class SeedRiskPropagator:
         # Power iteration
         for _ in range(self.max_iterations):
             p_next: Dict[str, float] = defaultdict(float)
+            dangling_mass = 0.0
             
-            # Distribute mass from neighbors
+            # Distribute mass from neighbors and collect scalar dangling mass
             for u in all_nodes:
                 p_u = p[u]
                 if p_u <= 0.0:
@@ -87,9 +93,13 @@ class SeedRiskPropagator:
                         trans_prob = w / deg
                         p_next[v] += (1.0 - self.restart_prob) * p_u * trans_prob
                 else:
-                    # Dangling node jumps back to restart vector
-                    for s_id in seed_ids:
-                        p_next[s_id] += (1.0 - self.restart_prob) * p_u * (1.0 / num_seeds)
+                    dangling_mass += p_u
+
+            # Redistribute dangling mass and restart mass cleanly in O(|S| + |V|)
+            if dangling_mass > 0.0:
+                dangling_share = (1.0 - self.restart_prob) * dangling_mass / num_seeds
+                for s_id in seed_ids:
+                    p_next[s_id] += dangling_share
 
             # Add restart component
             for nid in all_nodes:

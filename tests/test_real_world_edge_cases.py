@@ -296,6 +296,179 @@ class TestRealWorldEdgeCases(unittest.TestCase):
         self.assertEqual(pkg1.advisory_score.priority_score, pkg2.advisory_score.priority_score)
         self.assertEqual(pkg1.advisory_score.composite_risk_level, pkg2.advisory_score.composite_risk_level)
 
+    def test_graph_substring_cycle_and_temporal_edge_filtering(self):
+        """Graph traversal distinguishes prefix-overlapping node IDs and filters expired edges."""
+        from ebv_detector.graph.schema import EdgeType, GraphEdge, GraphNode, NodeType
+        from ebv_detector.graph.store import GraphStore
+        from ebv_detector.graph.traversal import GraphTraversalEngine
+
+        store = GraphStore()
+        traversal = GraphTraversalEngine(store, max_hops=4)
+        try:
+            # ORG-10 is substring-ambiguous if checked against ORG-1 without delimiters
+            store.add_node(GraphNode("ORG-10", NodeType.PROVIDER, "Clinic 10"))
+            store.add_node(GraphNode("ORG-1", NodeType.ORGANIZATION, "Parent 1"))
+            store.add_node(GraphNode("SEED-1", NodeType.SEED, "Excluded Seed", is_seed=True, seed_source="LEIE"))
+
+            store.add_edge(GraphEdge("ORG-1", "ORG-10", EdgeType.DIRECT_OWNERSHIP, ownership_percentage=0.5, effective_start="2020-01-01"))
+            store.add_edge(GraphEdge("SEED-1", "ORG-1", EdgeType.DIRECT_OWNERSHIP, ownership_percentage=0.5, effective_start="2020-01-01"))
+
+            # Should discover ORG-10 -> ORG-1 -> SEED-1 cleanly (0.25 indirect equity)
+            paths = traversal.find_paths_to_seeds("ORG-10", as_of_date="2026-02-01")
+            self.assertEqual(len(paths), 1)
+            self.assertEqual(paths[0].hops, 2)
+
+            ind = traversal.calculate_gr4_indirect_ownership("ORG-10", as_of_date="2026-02-01")
+            seed_ind = next(r for r in ind if r.upstream_entity_id == "SEED-1")
+            self.assertAlmostEqual(seed_ind.effective_indirect_pct, 0.25, places=3)
+
+            # Now test expired ownership edge: sold stake in 2022
+            store.add_node(GraphNode("ORG-FORMER", NodeType.PROVIDER, "Divested Clinic"))
+            store.add_edge(GraphEdge(
+                "SEED-1", "ORG-FORMER", EdgeType.DIRECT_OWNERSHIP,
+                ownership_percentage=0.5, effective_start="2019-01-01", effective_end="2022-12-31"
+            ))
+            ind_past = traversal.calculate_gr4_indirect_ownership("ORG-FORMER", as_of_date="2026-02-01")
+            self.assertEqual(len(ind_past), 0)
+            ind_during = traversal.calculate_gr4_indirect_ownership("ORG-FORMER", as_of_date="2021-06-01")
+            self.assertEqual(len(ind_during), 1)
+        finally:
+            store.close()
+
+    def test_same_tin_organization_exempt_from_velocity_and_template_false_positives(self):
+        """A legitimate multi-site clinic sharing one TIN does not falsely trigger burst/template flags."""
+        from ebv_detector.anomaly.application import ApplicationVelocityTracker
+        from ebv_detector.anomaly.template import MinHashTemplateDetector
+
+        tracker = ApplicationVelocityTracker(self.config.anomaly)
+        tpl = MinHashTemplateDetector(self.config.anomaly)
+        shared_manual = (
+            "CLINICAL QUALITY GOVERNANCE AND COMPLIANCE STANDARDS: CARE GROUP OPERATIONS. "
+            "SECTION 1: STAFF CREDENTIALING AND BOARD SUPERVISION ACROSS ALL LOCATIONS. "
+            "SECTION 2: QUALITY ASSURANCE AND HIPAA PRIVACY MONITORING."
+        )
+
+        # Same TIN submitting 4 sites via central compliance officer & corporate manual
+        for i in range(4):
+            app = ProviderApplication(
+                application_id=f"APP-MULTISITE-{i}",
+                npi=f"190001000{i}",
+                legal_business_name=f"Regional Health Clinic Site {i}",
+                tin="56-8888888",  # Same corporate TIN
+                formation_date="2015-01-01",
+                application_date="2026-02-01",
+                device_fingerprint_id="DEV-CORP-CREDENTIALER",
+                submission_ip_address="192.0.2.50",
+                email="credentialing@regionalhealth.org",
+                policy_manual_text=shared_manual
+            )
+            vel_ev = tracker.record_and_evaluate(app)
+            tpl_ev = tpl.register_and_evaluate(app)
+            self.assertEqual(vel_ev, [])
+            self.assertEqual(tpl_ev, [])
+
+    def test_chow_exempts_rapid_formation_and_criminal_disclosure_flagged(self):
+        """Change-of-ownership (CHOW) exempts age alert; disclosed criminal record flags REVIEW_REQUIRED."""
+        from ebv_detector.anomaly.application import ApplicationVelocityTracker
+
+        tracker = ApplicationVelocityTracker(self.config.anomaly)
+        addr = AddressRecord(address_line1="200 Clinic Way", city="Raleigh", state="NC", zip5="27601", rdi="COMMERCIAL")
+        app = ProviderApplication(
+            application_id="APP-CHOW-CRIM",
+            npi="1900020001",
+            legal_business_name="New Buyer Operations LLC",
+            tin="56-2222333",
+            service_category="FAMILY_PRACTICE",
+            formation_date="2026-01-29",  # 3 days old (expected in CHOW)
+            application_date="2026-02-01",
+            is_change_of_ownership=True,
+            primary_address=addr,
+            disclosed_persons=[
+                PersonDisclosure(
+                    first_name="Alex",
+                    last_name="Buyer",
+                    ssn_last4="3344",
+                    date_of_birth="1979-05-12",
+                    role="OWNER",
+                    direct_ownership_pct=1.0,
+                    has_criminal_record_disclosed=True,
+                )
+            ],
+        )
+        vel_ev = tracker.record_and_evaluate(app)
+        self.assertFalse(any(e.code == "M4-ANOMALY-RAPID-FORMATION" for e in vel_ev))
+
+        l1_dec = self.l1_engine.evaluate_application(app)
+        self.assertEqual(l1_dec.status, DecisionStatus.REVIEW_REQUIRED)
+        self.assertTrue(any(e.code == "L1-DISCLOSED-CRIMINAL-RECORD" for e in l1_dec.verified_facts))
+
+    def test_beacon_scenario3_exact_calibrated_score_without_double_counting(self):
+        """BEACON (Scenario 3) deduplicates shared EFT and suppresses redundant PageRank (~80.3)."""
+        from ebv_detector.synthetic.generator import SyntheticEBVGenerator
+
+        ds = SyntheticEBVGenerator(seed=42).generate_benchmark_suite()
+        cp1 = Checkpoint1Pipeline(self.config, ds.seed_records)
+        beacon = next(a for a in ds.applications if "BEACON" in a.legal_business_name.upper())
+        pkg = cp1.evaluate_application(beacon)
+
+        self.assertEqual(pkg.layer1_decision.status, DecisionStatus.GROUNDS_PENDING_HUMAN_DECISION)
+        self.assertAlmostEqual(pkg.advisory_score.priority_score, 80.3, places=1)
+        self.assertAlmostEqual(
+            sum(pkg.advisory_score.feature_contributions.values()),
+            pkg.advisory_score.priority_score,
+            places=1
+        )
+        self.assertFalse(any("PPR" in e.code for e in pkg.advisory_score.evidence_items))
+
+    def test_api_server_real_world_clean_claims_and_null_enrollment_payloads(self):
+        """API handles null/missing optional sections safely and does not falsify clean 8h workdays."""
+        from ebv_detector.api.server import EBVServer
+
+        srv = EBVServer()
+
+        # Clean 8h workday with $80k paid should NOT falsely trigger impossible hours or payment suspension
+        claims_res = srv.evaluate_claims({
+            "npi": "1900099901",
+            "service_category": "BEHAVIORAL_HEALTH",
+            "months_enrolled": 3,
+            "total_paid_30d": 80000,
+            "max_daily_hours": 8.0,
+            "inpatient_overlaps": 0,
+            "post_mortem_claims": 0,
+            "migrating_patients": 0,
+        })
+        self.assertFalse(claims_res["trigger_payment_suspension"])
+        self.assertEqual(claims_res["ramp_result"]["impossible_hours_count"], 0)
+        self.assertAlmostEqual(claims_res["ramp_result"]["total_paid_30d"], 80000.0, places=2)
+
+        # Null eft_account and empty disclosed_persons on two different apps must NOT create bogus EFT-_ collision
+        r1 = srv.evaluate_enrollment({
+            "legal_business_name": "Clean Clinic Alpha LLC",
+            "npi": "1900099902",
+            "tin": "56-7770001",
+            "service_category": "FAMILY_PRACTICE",
+            "formation_date": "2018-01-01",
+            "primary_address": {
+                "address_line1": "101 North Blvd", "city": "Raleigh", "state": "NC", "zip5": "27601"
+            },
+            "eft_account": None,
+            "disclosed_persons": []
+        })
+        r2 = srv.evaluate_enrollment({
+            "legal_business_name": "Clean Clinic Beta LLC",
+            "npi": "1900099903",
+            "tin": "56-7770002",
+            "service_category": "FAMILY_PRACTICE",
+            "formation_date": "2018-01-01",
+            "primary_address": {
+                "address_line1": "202 South Blvd", "city": "Durham", "state": "NC", "zip5": "27701"
+            },
+            "eft_account": None,
+            "disclosed_persons": []
+        })
+        self.assertEqual(r1["advisory_score"]["priority_score"], 0.0)
+        self.assertEqual(r2["advisory_score"]["priority_score"], 0.0)
+
 
 if __name__ == "__main__":
     unittest.main()
