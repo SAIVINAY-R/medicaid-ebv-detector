@@ -64,7 +64,9 @@ class Layer2AdvisoryEngine:
         if "MIGRATION" in code:
             return 5.0
         if "CLINICIAN" in code:
-            return 1.5
+            org_count = ev.details.get("unrelated_org_count", 2)
+            # Attenuate weight when a clinician legitimately practices across many large hospital/org TINs
+            return min(2.5, 1.5 if org_count <= 2 else max(0.5, 1.5 / math.log2(float(org_count))))
 
         # 2. Ownership family items
         if "INDIRECT-OWNERSHIP" in code:

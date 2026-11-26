@@ -161,16 +161,16 @@
           zip5: addr.zip5 || '27601',
           is_cmra: !!addr.is_cmra,
           is_po_box: !!addr.is_po_box,
-          is_virtual: !!addr.is_virtual_mailbox,
+          is_virtual: !!(addr.is_virtual_mailbox || addr.is_pmb),
           is_residential: (addr.rdi === 'RESIDENTIAL'),
           eft_routing: eft.routing_number || '',
           eft_account: eft.account_number || '',
-          person_name: p.first_name ? `${p.first_name} ${p.last_name}` : 'Victor Vanish',
+          person_name: p.first_name ? `${p.first_name} ${p.last_name}`.trim() : '',
           person_role: p.role || 'OWNER',
           person_pct: p.direct_ownership_pct !== undefined ? String(p.direct_ownership_pct * 100) : '100',
           ssn_last4: p.ssn_last4 || '',
           dob: p.date_of_birth || '',
-          device_id: sc.device_fingerprint_id || 'DEV-TEST-001',
+          device_id: sc.device_fingerprint_id || '',
           holding_org_id: sc.holding_org_id || '',
           upstream_owner_id: sc.upstream_owner_id || '',
           upstream_pct: sc.upstream_pct !== undefined ? String(sc.upstream_pct) : '',
@@ -222,48 +222,61 @@
         if (e) e.preventDefault();
         setLoading(true);
 
-        const nameParts = (formData.person_name || '').trim().split(' ');
-        const firstName = nameParts[0] || 'Victor';
-        const lastName = nameParts.slice(1).join(' ') || 'Vanish';
+        const cleanPersonName = (formData.person_name || '').trim();
+        const nameParts = cleanPersonName ? cleanPersonName.split(/\s+/) : [];
+        const firstName = nameParts[0] || '';
+        const lastName = nameParts.slice(1).join(' ');
 
         const upPct = parseFloat(formData.upstream_pct);
         const personPct = parseFloat(formData.person_pct);
 
+        const hasAddressInput = Boolean(
+          (formData.address_line1 || '').trim() ||
+          formData.is_cmra ||
+          formData.is_po_box ||
+          formData.is_virtual
+        );
+        const hasEftInput = Boolean(
+          (formData.eft_routing || '').trim() ||
+          (formData.eft_account || '').trim()
+        );
+        const hasPersonInput = Boolean(cleanPersonName || (formData.ssn_last4 || '').trim());
+
         const payload = {
-          legal_business_name: formData.legal_business_name || 'Sample Healthcare LLC',
-          npi: formData.npi || '1900000001',
-          tin: formData.tin || '56-1234567',
+          legal_business_name: (formData.legal_business_name || '').trim(),
+          npi: (formData.npi || '').trim(),
+          tin: (formData.tin || '').trim(),
           service_category: formData.service_category,
-          formation_date: formData.formation_date || '2026-01-01',
+          formation_date: formData.formation_date || '',
           application_date: formData.application_date || '2026-02-01',
-          phone: formData.phone || '919-555-8822',
-          primary_address: {
-            address_line1: formData.address_line1 || '100 Medical Plaza',
-            address_line2: formData.address_line2 || '',
-            city: formData.city || 'Raleigh',
-            state: formData.state || 'NC',
-            zip5: formData.zip5 || '27601',
+          phone: (formData.phone || '').trim(),
+          primary_address: hasAddressInput ? {
+            address_line1: (formData.address_line1 || '').trim(),
+            address_line2: (formData.address_line2 || '').trim(),
+            city: (formData.city || '').trim() || 'Raleigh',
+            state: (formData.state || '').trim() || 'NC',
+            zip5: (formData.zip5 || '').trim() || '27601',
             is_cmra: !!formData.is_cmra,
             is_po_box: !!formData.is_po_box,
             is_virtual_mailbox: !!formData.is_virtual,
             is_pmb: !!formData.is_virtual,
             rdi: formData.is_residential ? 'RESIDENTIAL' : 'COMMERCIAL'
-          },
-          eft_account: {
-            routing_number: formData.eft_routing || '053000196',
-            account_number: formData.eft_account || '1122334455'
-          },
-          disclosed_persons: [{
+          } : null,
+          eft_account: hasEftInput ? {
+            routing_number: (formData.eft_routing || '').trim(),
+            account_number: (formData.eft_account || '').trim()
+          } : null,
+          disclosed_persons: hasPersonInput ? [{
             first_name: firstName,
             last_name: lastName,
             role: formData.person_role,
             direct_ownership_pct: !isNaN(personPct) ? personPct / 100.0 : 1.0,
-            ssn_last4: formData.ssn_last4 || '4912',
-            date_of_birth: formData.dob || '1992-04-18'
-          }],
-          device_fingerprint_id: formData.device_id || 'DEV-TEST-001',
-          holding_org_id: formData.holding_org_id || '',
-          upstream_owner_id: formData.upstream_owner_id || '',
+            ssn_last4: (formData.ssn_last4 || '').trim(),
+            date_of_birth: formData.dob || ''
+          }] : [],
+          device_fingerprint_id: (formData.device_id || '').trim() || null,
+          holding_org_id: (formData.holding_org_id || '').trim(),
+          upstream_owner_id: (formData.upstream_owner_id || '').trim(),
           upstream_pct: !isNaN(upPct) ? upPct / 100.0 : 0.0,
           policy_manual_text: formData.policy_text || ''
         };

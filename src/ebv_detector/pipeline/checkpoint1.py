@@ -10,16 +10,18 @@ Integrates:
 - WORM Cryptographic Audit Logging
 """
 
+from collections import defaultdict
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from ..address.clustering import AddressClusterEngine
 from ..anomaly.application import ApplicationVelocityTracker
 from ..anomaly.template import MinHashTemplateDetector
 from ..config import SystemConfig
 from ..entity_resolution.fellegi_sunter import FellegiSunterResolver
-from ..entity_resolution.near_match_queue import NearMatchQueue
+from ..entity_resolution.near_match_queue import AdjudicationAction, NearMatchQueue
 from ..graph.risk_propagation import SeedRiskPropagator
 from ..graph.schema import EdgeType, GraphEdge, GraphNode, NodeType
 from ..graph.store import GraphStore
@@ -80,8 +82,12 @@ class Checkpoint1Pipeline:
         self.layer2_engine = Layer2AdvisoryEngine(self.config)
         self.audit_logger = WormAuditLogger(self.config.model_version, config=self.config)
         
-        # Internal application cohort
+        # Internal application cohort and stateful indices
         self._application_cohort: List[ProviderApplication] = []
+        self._latest_apps: Dict[str, ProviderApplication] = {}
+        self._latest_evaluations: Dict[str, Checkpoint1EvaluationPackage] = {}
+        self._clinician_orgs: Dict[str, List[Tuple[str, str]]] = defaultdict(list)
+        self._snapshot_seq: int = 0
         
         # Ingest initial seeds into graph store
         self._ingest_seeds_into_graph()
@@ -343,18 +349,54 @@ class Checkpoint1Pipeline:
                 effective_start=app_eff_date
             ))
 
-    def evaluate_application(self, app: ProviderApplication) -> Checkpoint1EvaluationPackage:
-        """Run entire end-to-end Checkpoint 1 evaluation pipeline on application."""
-        collected_evidence: List[EvidenceItem] = []
-
-        # 1. Synchronize to Graph
+    def ingest_application(self, app: ProviderApplication) -> str:
+        """Persist application into graph, cohort, clinician, velocity, and template registries."""
+        self._snapshot_seq += 1
         self._sync_application_to_graph(app)
+        self.address_cluster_engine.register_provider(app)
+        self.velocity_tracker.record_and_evaluate(app, record=True)
+        self.template_detector.register_and_evaluate(app, record=True)
 
-        # 2. M1 Entity Resolution against cohort
+        clean_tin = re.sub(r"\D", "", app.tin or "")
+        clin_npis = sorted(set((app.rendering_clinician_npis or []) + (app.supervising_clinician_npis or [])))
+        for c_npi in clin_npis:
+            if not c_npi:
+                continue
+            entries = [e for e in self._clinician_orgs[c_npi] if e[0] != app.application_id]
+            entries.append((app.application_id, clean_tin))
+            self._clinician_orgs[c_npi] = entries
+
+        self._application_cohort = [a for a in self._application_cohort if a.application_id != app.application_id]
+        self._application_cohort.append(app)
+        self._latest_apps[app.application_id] = app
+        return f"SNAP-{self._snapshot_seq:06d}"
+
+    def get_latest_evaluation(self, application_id: str) -> Optional[Checkpoint1EvaluationPackage]:
+        """Return most recent (possibly ring re-scored) Checkpoint 1 package for an application."""
+        return self._latest_evaluations.get(application_id)
+
+    def score_application(
+        self,
+        app: ProviderApplication,
+        *,
+        record_audit: bool = False,
+        enqueue_near_matches: bool = False,
+        parent_record_id: Optional[str] = None
+    ) -> Checkpoint1EvaluationPackage:
+        """Read-only scoring evaluation of an application against current snapshot state."""
+        collected_evidence: List[EvidenceItem] = []
+        snapshot_id = f"SNAP-{max(1, self._snapshot_seq):06d}"
+
+        # 1. M1 Entity Resolution against cohort (respecting human LINK/DECOUPLE adjudications)
         matches = self.resolver.find_matches_in_cohort(app, self._application_cohort)
         near_matches = []
+        confirmed_link_peers: Set[str] = set()
         for m in matches:
-            if m.is_match:
+            if self.near_match_queue.is_decoupled(app.application_id, m.candidate_id_b):
+                continue
+            is_human_link = self.near_match_queue.is_confirmed_link(app.application_id, m.candidate_id_b)
+            if m.is_match or is_human_link:
+                confirmed_link_peers.add(m.candidate_id_b)
                 collected_evidence.append(EvidenceItem(
                     code="M1-RESOLVER-HIGH-CONFIDENCE-LINK",
                     description=(
@@ -363,18 +405,24 @@ class Checkpoint1Pipeline:
                     ),
                     source_layer="M1_RESOLVER",
                     severity=EvidenceSeverity.HIGH,
-                    verified_fact=False,
+                    verified_fact=bool(is_human_link),
                     fact_key=f"LINK:{m.candidate_id_b}",
                     family="IDENTITY",
                     details={
                         "posterior_prob": m.posterior_prob,
                         "match_score": m.match_score,
                         "field_comparisons": m.field_level_comparisons,
+                        "linked_applications": [m.candidate_id_b],
                     }
                 ))
             elif m.is_near_match:
-                q_item = self.near_match_queue.enqueue(m)
-                near_matches.append(q_item)
+                q_item = (
+                    self.near_match_queue.enqueue(m)
+                    if enqueue_near_matches
+                    else self.near_match_queue.get_existing(app.application_id, m.candidate_id_b)
+                )
+                if q_item:
+                    near_matches.append(q_item)
                 collected_evidence.append(EvidenceItem(
                     code="M1-RESOLVER-NEAR-MATCH-ENQUEUED",
                     description=(
@@ -386,18 +434,38 @@ class Checkpoint1Pipeline:
                     verified_fact=False,
                     fact_key=f"NEAR_MATCH:{m.candidate_id_b}",
                     family="IDENTITY",
-                    details={"queue_item_id": q_item.item_id, "score": m.match_score}
+                    details={
+                        "queue_item_id": q_item.item_id if q_item else None,
+                        "score": m.match_score,
+                        "linked_applications": [m.candidate_id_b],
+                    }
                 ))
 
-        # 3. M2 Address Risk and Co-Location Clustering
+        # Include human-linked peers even if cohort re-comparison score drifted below near-match
+        for cand in self._application_cohort:
+            if (
+                cand.application_id != app.application_id
+                and cand.application_id not in confirmed_link_peers
+                and self.near_match_queue.is_confirmed_link(app.application_id, cand.application_id)
+            ):
+                collected_evidence.append(EvidenceItem(
+                    code="M1-RESOLVER-HIGH-CONFIDENCE-LINK",
+                    description=f"Human-adjudicated LINK confirmed with provider '{cand.application_id}'.",
+                    source_layer="M1_RESOLVER",
+                    severity=EvidenceSeverity.HIGH,
+                    verified_fact=True,
+                    fact_key=f"LINK:{cand.application_id}",
+                    family="IDENTITY",
+                    details={"posterior_prob": 0.99, "linked_applications": [cand.application_id]}
+                ))
+
+        # 2. M2 Address Risk and Co-Location Clustering (read-only)
         density_evidence = self.address_cluster_engine.evaluate_density(app)
         collected_evidence.extend(density_evidence)
-        self.address_cluster_engine.register_provider(app)
 
-        # 4. M3 Graph Traversal: Paths to Seeds & GR-4 Indirect Ownership (point-in-time filtered)
+        # 3. M3 Graph Traversal: Paths to Seeds & GR-4 Indirect Ownership (point-in-time filtered)
         paths_to_seeds = self.graph_traversal.find_paths_to_seeds(app.npi, as_of_date=app.application_date)
         for p in paths_to_seeds:
-            # Share canonical fact_key when path goes directly through a shared Layer-1 identifier node
             canonical_key = f"PATH_TO_SEED:{p.target_node_id}"
             if p.hops == 2 and len(p.path_nodes) >= 2:
                 mid = p.path_nodes[1]
@@ -428,29 +496,65 @@ class Checkpoint1Pipeline:
             app.npi, as_of_date=app.application_date
         )
 
-        # 4b. Personalized PageRank Risk Propagation (only emit alert when no direct seed path explains it)
-        ppr_scores = self.seed_propagator.compute_personalized_pagerank()
-        ppr_score = self.seed_propagator.get_risk_score(app.npi, ppr_scores)
-        if not paths_to_seeds and ppr_score >= self.config.graph.ppr_alert_threshold:
-            collected_evidence.append(EvidenceItem(
-                code="M3-PPR-SEED-PROXIMITY-ALERT",
-                description=(
-                    f"Personalized PageRank seed risk propagation score is {ppr_score:.2f} "
-                    f"(alert threshold >= {self.config.graph.ppr_alert_threshold}). High topological proximity to fraud rings."
-                ),
-                source_layer="M3_GRAPH",
-                severity=EvidenceSeverity.HIGH,
-                verified_fact=False,
-                fact_key="PPR:SEED_PROXIMITY",
-                family="AFFILIATION",
-                details={"ppr_score": ppr_score}
-            ))
+        # 3b. M3 Shared Clinicians Across Unrelated TINs
+        clean_tin = re.sub(r"\D", "", app.tin or "")
+        clin_npis = sorted(set((app.rendering_clinician_npis or []) + (app.supervising_clinician_npis or [])))
+        for c_npi in clin_npis:
+            if not c_npi:
+                continue
+            peers = self._clinician_orgs.get(c_npi, [])
+            unrelated_peers = [
+                pid for pid, ptin in peers
+                if pid != app.application_id and (not clean_tin or not ptin or ptin != clean_tin)
+            ]
+            if unrelated_peers:
+                distinct_tins = {ptin for _, ptin in peers if ptin}
+                if clean_tin:
+                    distinct_tins.add(clean_tin)
+                total_orgs = max(len(distinct_tins), len(unrelated_peers) + 1)
+                collected_evidence.append(EvidenceItem(
+                    code="M3-SHARED-CLINICIAN-ACROSS-TINS",
+                    description=(
+                        f"Clinician NPI '{c_npi}' is associated with {total_orgs} distinct provider entities/TINs "
+                        f"({', '.join(sorted(set(unrelated_peers))[:5])})."
+                    ),
+                    source_layer="M3_GRAPH",
+                    severity=EvidenceSeverity.MEDIUM,
+                    verified_fact=False,
+                    fact_key=f"CLINICIAN:{c_npi}",
+                    family="AFFILIATION",
+                    details={
+                        "clinician_npi": c_npi,
+                        "unrelated_org_count": total_orgs,
+                        "linked_applications": sorted(set(unrelated_peers)),
+                    }
+                ))
 
-        # 5. M4 Velocity & Template Detection
-        velocity_evidence = self.velocity_tracker.record_and_evaluate(app)
+        # 4. Personalized PageRank Risk Propagation (only compute if node exists in graph)
+        ppr_score = 0.0
+        if self.graph_store.get_node(app.npi) is not None:
+            ppr_scores = self.seed_propagator.compute_personalized_pagerank()
+            ppr_score = self.seed_propagator.get_risk_score(app.npi, ppr_scores)
+            if not paths_to_seeds and ppr_score >= self.config.graph.ppr_alert_threshold:
+                collected_evidence.append(EvidenceItem(
+                    code="M3-PPR-SEED-PROXIMITY-ALERT",
+                    description=(
+                        f"Personalized PageRank seed risk propagation score is {ppr_score:.2f} "
+                        f"(alert threshold >= {self.config.graph.ppr_alert_threshold}). High topological proximity to fraud rings."
+                    ),
+                    source_layer="M3_GRAPH",
+                    severity=EvidenceSeverity.HIGH,
+                    verified_fact=False,
+                    fact_key="PPR:SEED_PROXIMITY",
+                    family="AFFILIATION",
+                    details={"ppr_score": ppr_score}
+                ))
+
+        # 5. M4 Velocity & Template Detection (strictly read-only against stored histories)
+        velocity_evidence = self.velocity_tracker.record_and_evaluate(app, record=False)
         collected_evidence.extend(velocity_evidence)
 
-        template_evidence = self.template_detector.register_and_evaluate(app)
+        template_evidence = self.template_detector.register_and_evaluate(app, record=False)
         collected_evidence.extend(template_evidence)
 
         # 6. Layer 1 Authoritative Rules Gate
@@ -469,16 +573,32 @@ class Checkpoint1Pipeline:
             ppr_risk_score=ppr_score
         )
 
-        # 8. WORM Audit Trail
-        audit_rec = self.audit_logger.log_decision_event(
-            app=app,
-            layer1_decision=layer1_decision,
-            advisory_score=advisory_score
-        )
-
-        # Upsert application in internal cohort for future comparisons without duplicates
-        self._application_cohort = [a for a in self._application_cohort if a.application_id != app.application_id]
-        self._application_cohort.append(app)
+        # 8. WORM Audit Trail (skipped during dry-run/read-only evaluation)
+        if record_audit:
+            audit_rec = self.audit_logger.log_decision_event(
+                app=app,
+                layer1_decision=layer1_decision,
+                advisory_score=advisory_score,
+                snapshot_id=snapshot_id,
+                parent_record_id=parent_record_id,
+            )
+        else:
+            feat_sha = self.audit_logger.compute_feature_vector_sha256(app, advisory_score.evidence_items)
+            audit_rec = AuditRecord(
+                record_id="DRY-RUN",
+                application_id=app.application_id,
+                timestamp_utc=datetime.now(timezone.utc).isoformat(),
+                feature_vector_sha256=feat_sha,
+                model_version=self.config.model_version,
+                snapshot_id=snapshot_id,
+                layer1_status=layer1_decision.status.value,
+                advisory_priority_score=advisory_score.priority_score,
+                verified_fact_codes=[e.code for e in layer1_decision.verified_facts],
+                event_type="DRY_RUN_EVALUATION",
+                parent_record_id=parent_record_id,
+                config_weights_sha256=self.audit_logger.config_weights_sha256,
+                audit_hash="",
+            )
 
         return Checkpoint1EvaluationPackage(
             application_id=app.application_id,
@@ -489,3 +609,66 @@ class Checkpoint1Pipeline:
             indirect_ownership=indirect_ownership,
             near_matches=near_matches
         )
+
+    def _discover_linked_peer_ids(self, pkg: Checkpoint1EvaluationPackage) -> List[str]:
+        """Collect peer application IDs connected via device/IP/email, templates, clinicians, or M1 links."""
+        peer_ids: Set[str] = set()
+        for ev in pkg.advisory_score.evidence_items:
+            for lid in ev.details.get("linked_applications", []) or []:
+                if isinstance(lid, str) and lid != pkg.application_id:
+                    peer_ids.add(lid)
+            for m_item in ev.details.get("matched_applications", []) or []:
+                if isinstance(m_item, dict) and m_item.get("app_id") and m_item["app_id"] != pkg.application_id:
+                    peer_ids.add(m_item["app_id"])
+        return sorted(peer_ids)
+
+    def _rescore_peer_ids(self, peer_ids: List[str]) -> Dict[str, Checkpoint1EvaluationPackage]:
+        """Re-score affected peers after graph/ring updates and append chained WORM records when scores change."""
+        updated: Dict[str, Checkpoint1EvaluationPackage] = {}
+        for pid in peer_ids:
+            peer_app = self._latest_apps.get(pid)
+            if not peer_app:
+                continue
+            prior_pkg = self._latest_evaluations.get(pid)
+            probe_pkg = self.score_application(peer_app, record_audit=False, enqueue_near_matches=False)
+            changed = (
+                prior_pkg is None
+                or probe_pkg.advisory_score.priority_score != prior_pkg.advisory_score.priority_score
+                or probe_pkg.layer1_decision.status != prior_pkg.layer1_decision.status
+            )
+            if changed:
+                parent_rec_id = prior_pkg.audit_record.record_id if prior_pkg else None
+                new_pkg = self.score_application(
+                    peer_app,
+                    record_audit=True,
+                    enqueue_near_matches=False,
+                    parent_record_id=parent_rec_id,
+                )
+                self._latest_evaluations[pid] = new_pkg
+                updated[pid] = new_pkg
+        return updated
+
+    def adjudicate_near_match(
+        self,
+        item_id: str,
+        action: AdjudicationAction,
+        reviewer_id: str,
+        notes: str = ""
+    ) -> Dict[str, Any]:
+        """Adjudicate a near-match queue item and feed LINK/DECOUPLE back into ring scores."""
+        q_item = self.near_match_queue.adjudicate(item_id, action, reviewer_id, notes)
+        affected = [q_item.match_result.candidate_id_a, q_item.match_result.candidate_id_b]
+        updated = self._rescore_peer_ids(affected)
+        return {"queue_item": q_item, "updated_evaluations": updated}
+
+    def evaluate_application(self, app: ProviderApplication) -> Checkpoint1EvaluationPackage:
+        """Ingest application, evaluate Checkpoint 1, and trigger ring re-scoring on newly linked peers."""
+        self.ingest_application(app)
+        pkg = self.score_application(app, record_audit=True, enqueue_near_matches=True)
+        self._latest_evaluations[app.application_id] = pkg
+
+        linked_peers = self._discover_linked_peer_ids(pkg)
+        if linked_peers:
+            self._rescore_peer_ids(linked_peers)
+
+        return pkg

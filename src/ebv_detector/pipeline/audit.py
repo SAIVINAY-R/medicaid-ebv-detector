@@ -78,7 +78,8 @@ class WormAuditLogger:
         app: ProviderApplication,
         layer1_decision: Layer1Decision,
         advisory_score: AdvisoryScore,
-        snapshot_id: str = "SNAP-2026-02-01"
+        snapshot_id: str = "SNAP-2026-02-01",
+        parent_record_id: Optional[str] = None
     ) -> AuditRecord:
         """Create and store immutable audit record for an application decision event."""
         now_iso = datetime.now(timezone.utc).isoformat()
@@ -86,11 +87,12 @@ class WormAuditLogger:
         rec_id = f"AUDIT-{len(self._records) + 1:06d}"
         fact_codes = [e.code for e in layer1_decision.verified_facts]
 
-        # Cryptographic chaining: hash(prev_hash + current_data including weights & snapshot)
+        # Cryptographic chaining: hash(prev_hash + current_data including weights, snapshot, optional parent)
+        parent_part = f"|{parent_record_id}" if parent_record_id else ""
         record_content = (
             f"{self._previous_hash}|{rec_id}|SYSTEM_INFERENCE|{app.application_id}|{now_iso}|{feat_sha}|"
             f"{layer1_decision.status.value}|{advisory_score.priority_score}|{snapshot_id}|"
-            f"{self.config_weights_sha256}|{','.join(fact_codes)}"
+            f"{self.config_weights_sha256}|{','.join(fact_codes)}{parent_part}"
         )
         curr_hash = hashlib.sha256(record_content.encode("utf-8")).hexdigest()
         self._previous_hash = curr_hash
@@ -106,6 +108,7 @@ class WormAuditLogger:
             advisory_priority_score=advisory_score.priority_score,
             verified_fact_codes=fact_codes,
             event_type="SYSTEM_INFERENCE",
+            parent_record_id=parent_record_id,
             config_weights_sha256=self.config_weights_sha256,
             audit_hash=curr_hash
         )
@@ -171,10 +174,11 @@ class WormAuditLogger:
                     f"{rec.timestamp_utc}|{parent_hash}"
                 )
             else:
+                parent_part = f"|{rec.parent_record_id}" if rec.parent_record_id else ""
                 content = (
                     f"{expected_prev}|{rec.record_id}|SYSTEM_INFERENCE|{rec.application_id}|{rec.timestamp_utc}|"
                     f"{rec.feature_vector_sha256}|{rec.layer1_status}|{rec.advisory_priority_score}|"
-                    f"{rec.snapshot_id}|{rec.config_weights_sha256}|{','.join(rec.verified_fact_codes)}"
+                    f"{rec.snapshot_id}|{rec.config_weights_sha256}|{','.join(rec.verified_fact_codes)}{parent_part}"
                 )
             computed_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
             if computed_hash != rec.audit_hash:

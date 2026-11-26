@@ -56,16 +56,30 @@ class SeedRiskPropagator:
         # Pre-compute supernodes once per pass instead of querying DB per edge
         self.supernode_mgr.scan_for_supernodes()
 
-        # Build adjacency graph with supernode-damped weights (accumulate multi-edges, skip self-loops)
+        edge_type_weights = {
+            "DIRECT_OWNERSHIP": 1.5,
+            "LINKED_SEED": 1.5,
+            "USES_EFT": 1.2,
+            "MANAGING_EMPLOYEE": 1.2,
+            "AUTHORIZED_OFFICIAL": 1.0,
+            "USES_ADDRESS": 0.7,
+            "CLINICIAN": 0.7,
+            "USES_PHONE": 0.5,
+            "USES_EMAIL": 0.4,
+            "SUBMITTED_FROM": 0.4,
+        }
+
+        # Build adjacency graph with supernode-damped and edge-type-calibrated weights
         adj: Dict[str, Dict[str, float]] = defaultdict(dict)
         with self.store.lock:
             cur = self.store.conn.cursor()
-            cur.execute("SELECT source_id, target_id, weight FROM graph_edges")
+            cur.execute("SELECT source_id, target_id, edge_type, weight FROM graph_edges")
             for r in cur.fetchall():
                 u, v, base_w = r["source_id"], r["target_id"], r["weight"]
                 if u == v:
                     continue
-                eff_w = self.supernode_mgr.get_effective_edge_weight(u, v, base_w)
+                type_mult = edge_type_weights.get(r["edge_type"], 1.0)
+                eff_w = self.supernode_mgr.get_effective_edge_weight(u, v, base_w * type_mult)
                 adj[u][v] = adj[u].get(v, 0.0) + eff_w
                 adj[v][u] = adj[v].get(u, 0.0) + eff_w
 
@@ -123,4 +137,19 @@ class SeedRiskPropagator:
         # Typical non-seed values are between 1e-4 and 0.2
         scaled = min(1.0, max(0.0, (math.log10(raw_val + 1e-8) + 5.0) / 5.0))
         return round(scaled, 4)
+
+    def get_percentile_risk(self, node_id: str, ppr_scores: Optional[Dict[str, float]] = None) -> float:
+        """Compute empirical percentile rank [0.0, 1.0] of node_id among non-seed graph nodes."""
+        scores = ppr_scores or self.compute_personalized_pagerank()
+        target_val = scores.get(node_id, 0.0)
+        if target_val <= 0.0:
+            return 0.0
+        with self.store.lock:
+            cur = self.store.conn.cursor()
+            cur.execute("SELECT node_id FROM graph_nodes WHERE is_seed = 0")
+            non_seed_ids = [r["node_id"] for r in cur.fetchall()]
+        if not non_seed_ids:
+            return 0.0
+        below = sum(1 for nid in non_seed_ids if scores.get(nid, 0.0) < target_val)
+        return round(below / len(non_seed_ids), 4)
 

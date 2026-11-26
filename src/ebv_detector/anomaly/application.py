@@ -67,7 +67,7 @@ class ApplicationVelocityTracker:
                 seen_ids.append(aid)
         return seen_ids
 
-    def record_and_evaluate(self, app: ProviderApplication) -> List[EvidenceItem]:
+    def record_and_evaluate(self, app: ProviderApplication, record: bool = True) -> List[EvidenceItem]:
         """Record current application telemetry and check for velocity/clustering anomalies within sliding windows."""
         evidence: List[EvidenceItem] = []
         app_date = app.application_date
@@ -126,7 +126,8 @@ class ApplicationVelocityTracker:
                         "window_days": 7
                     }
                 ))
-            self._record_entry(self._device_history, app.device_fingerprint_id, app.application_id, app_date, clean_tin)
+            if record:
+                self._record_entry(self._device_history, app.device_fingerprint_id, app.application_id, app_date, clean_tin)
 
         # 3. Check IP Address Velocity (7-day window, distinct TINs)
         if app.submission_ip_address:
@@ -152,7 +153,8 @@ class ApplicationVelocityTracker:
                         "window_days": 7
                     }
                 ))
-            self._record_entry(self._ip_history, app.submission_ip_address, app.application_id, app_date, clean_tin)
+            if record:
+                self._record_entry(self._ip_history, app.submission_ip_address, app.application_id, app_date, clean_tin)
 
         # 4. Check Email Sharing (30-day window, distinct TINs)
         if app.email:
@@ -176,7 +178,8 @@ class ApplicationVelocityTracker:
                         "window_days": 30
                     }
                 ))
-            self._record_entry(self._email_history, email_key, app.application_id, app_date, clean_tin)
+            if record:
+                self._record_entry(self._email_history, email_key, app.application_id, app_date, clean_tin)
 
         return evidence
 

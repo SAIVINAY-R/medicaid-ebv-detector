@@ -71,7 +71,7 @@ class MinHashTemplateDetector:
         matches = sum(1 for v1, v2 in zip(sig1, sig2) if v1 == v2)
         return matches / len(sig1)
 
-    def register_and_evaluate(self, app: ProviderApplication) -> List[EvidenceItem]:
+    def register_and_evaluate(self, app: ProviderApplication, record: bool = True) -> List[EvidenceItem]:
         """Evaluate application policy manual against previously submitted applications."""
         if not app.policy_manual_text or len(app.policy_manual_text.strip()) < 50:
             return []
@@ -126,10 +126,11 @@ class MinHashTemplateDetector:
                 }
             ))
 
-        # Store signature for future comparisons
-        self._signatures[app.application_id] = target_sig
-        self._app_names[app.application_id] = app.legal_business_name
-        self._app_tins[app.application_id] = target_tin
+        # Store signature for future comparisons unless evaluating in dry-run/read-only mode
+        if record:
+            self._signatures[app.application_id] = target_sig
+            self._app_names[app.application_id] = app.legal_business_name
+            self._app_tins[app.application_id] = target_tin
 
         return evidence
 

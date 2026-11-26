@@ -22,7 +22,7 @@ src_dir = Path(__file__).resolve().parent / "src"
 if str(src_dir) not in sys.path:
     sys.path.insert(0, str(src_dir))
 
-from ebv_detector.config import SystemConfig
+from ebv_detector.config import GraphConfig, SystemConfig
 from ebv_detector.graph.store import GraphStore
 from ebv_detector.pipeline.checkpoint1 import Checkpoint1Pipeline
 from ebv_detector.synthetic.generator import SyntheticEBVGenerator
@@ -33,19 +33,15 @@ def build_live_database(db_path: str = ":memory:") -> GraphStore:
     generator = SyntheticEBVGenerator(seed=42)
     dataset = generator.generate_benchmark_suite()
 
-    store = GraphStore(db_path=db_path)
-    cp1 = Checkpoint1Pipeline(SystemConfig(), dataset.seed_records)
-    # Point cp1 to our target store
-    cp1.graph_store = store
+    cfg = SystemConfig(graph=GraphConfig(sqlite_db_path=db_path))
+    cp1 = Checkpoint1Pipeline(cfg, dataset.seed_records)
 
-    # Ingest seeds and ownership edges
+    # Ingest ownership edges and evaluate all benchmark applications
     cp1.ingest_ownership_edges(dataset.ownership_edges)
-
-    # Ingest applications
     for app in dataset.applications:
         cp1.evaluate_application(app)
 
-    return store
+    return cp1.graph_store
 
 
 def format_table(columns, rows):
@@ -72,11 +68,11 @@ def format_table(columns, rows):
     return "\n".join(lines)
 
 
-def run_sql(conn: sqlite3.Connection, query: str):
+def run_sql(conn: sqlite3.Connection, query: str, params: tuple = ()):
     """Execute SQL query and print formatted table."""
     try:
         cur = conn.cursor()
-        cur.execute(query)
+        cur.execute(query, params)
         if not cur.description:
             print("[*] Query executed successfully (no rows returned).")
             return
@@ -187,14 +183,22 @@ def main():
         show_stats(conn)
     elif args.nodes:
         if args.nodes == "ALL":
-            run_sql(conn, f"SELECT node_id, node_type, label, is_seed FROM graph_nodes LIMIT {args.limit};")
+            run_sql(conn, "SELECT node_id, node_type, label, is_seed FROM graph_nodes LIMIT ?;", (args.limit,))
         else:
-            run_sql(conn, f"SELECT node_id, node_type, label, is_seed FROM graph_nodes WHERE node_type = '{args.nodes.upper()}' LIMIT {args.limit};")
+            run_sql(
+                conn,
+                "SELECT node_id, node_type, label, is_seed FROM graph_nodes WHERE node_type = ? LIMIT ?;",
+                (args.nodes.upper(), args.limit),
+            )
     elif args.edges:
         if args.edges == "ALL":
-            run_sql(conn, f"SELECT source_id, edge_type, target_id, ownership_percentage FROM graph_edges LIMIT {args.limit};")
+            run_sql(conn, "SELECT source_id, edge_type, target_id, ownership_percentage FROM graph_edges LIMIT ?;", (args.limit,))
         else:
-            run_sql(conn, f"SELECT source_id, edge_type, target_id, ownership_percentage FROM graph_edges WHERE edge_type = '{args.edges.upper()}' LIMIT {args.limit};")
+            run_sql(
+                conn,
+                "SELECT source_id, edge_type, target_id, ownership_percentage FROM graph_edges WHERE edge_type = ? LIMIT ?;",
+                (args.edges.upper(), args.limit),
+            )
     elif args.sql:
         run_sql(conn, args.sql)
     elif args.interactive:

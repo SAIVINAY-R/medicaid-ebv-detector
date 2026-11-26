@@ -469,6 +469,275 @@ class TestRealWorldEdgeCases(unittest.TestCase):
         self.assertEqual(r1["advisory_score"]["priority_score"], 0.0)
         self.assertEqual(r2["advisory_score"]["priority_score"], 0.0)
 
+    def test_scenario4_ring_rescoring_eliminates_arrival_order_bias(self):
+        """Early Scenario 4 ring member SERENITY is re-scored when peers arrive via chained WORM audit records."""
+        from ebv_detector.synthetic.generator import SyntheticEBVGenerator
+
+        ds = SyntheticEBVGenerator(seed=42).generate_benchmark_suite()
+        cp1 = Checkpoint1Pipeline(self.config, ds.seed_records)
+        ring_apps = [
+            a for a in ds.applications
+            if any(name in a.legal_business_name.upper() for name in ("SERENITY", "TRANQUILITY", "HARMONY"))
+        ]
+        self.assertEqual(len(ring_apps), 3)
+
+        initial_pkgs = [cp1.evaluate_application(a) for a in ring_apps]
+        serenity_initial = initial_pkgs[0]
+        harmony_final = initial_pkgs[-1]
+
+        # Initially SERENITY only sees rapid formation (~31.3), before peers arrive
+        self.assertLess(serenity_initial.advisory_score.priority_score, 40.0)
+        self.assertGreater(harmony_final.advisory_score.priority_score, 75.0)
+
+        # After all 3 arrive, SERENITY's latest ring-rescored evaluation equals full ring risk
+        serenity_latest = cp1.get_latest_evaluation(serenity_initial.application_id)
+        self.assertIsNotNone(serenity_latest)
+        self.assertGreater(serenity_latest.advisory_score.priority_score, 75.0)
+        self.assertEqual(serenity_latest.advisory_score.composite_risk_level, "CRITICAL")
+        self.assertIsNotNone(serenity_latest.audit_record.parent_record_id)
+        self.assertTrue(cp1.audit_logger.verify_chain())
+
+    def test_shared_clinician_across_unrelated_tins_and_same_tin_exemption(self):
+        """Shared clinician NPI flags unrelated TINs while same-TIN corporate sites remain exempt."""
+        cp1 = Checkpoint1Pipeline(self.config, [])
+        shared_clin = "1888777666"
+
+        app_a = ProviderApplication(
+            application_id="APP-CLIN-A",
+            npi="1901000001",
+            legal_business_name="Clinic One LLC",
+            tin="56-1111111",
+            formation_date="2018-01-01",
+            application_date="2026-02-01",
+            rendering_clinician_npis=[shared_clin],
+            primary_address=AddressRecord("101 First St", "Raleigh", "NC", "27601", rdi="COMMERCIAL"),
+        )
+        app_same_tin = ProviderApplication(
+            application_id="APP-CLIN-B-SAME",
+            npi="1901000002",
+            legal_business_name="Clinic One South Branch LLC",
+            tin="56-1111111",
+            formation_date="2018-01-01",
+            application_date="2026-02-01",
+            rendering_clinician_npis=[shared_clin],
+            primary_address=AddressRecord("102 Second St", "Raleigh", "NC", "27601", rdi="COMMERCIAL"),
+        )
+        app_diff_tin = ProviderApplication(
+            application_id="APP-CLIN-C-UNRELATED",
+            npi="1901000003",
+            legal_business_name="Clinic Two Independent LLC",
+            tin="56-2222222",
+            formation_date="2018-01-01",
+            application_date="2026-02-01",
+            rendering_clinician_npis=[shared_clin],
+            primary_address=AddressRecord("103 Third St", "Durham", "NC", "27701", rdi="COMMERCIAL"),
+        )
+
+        cp1.evaluate_application(app_a)
+        pkg_same = cp1.evaluate_application(app_same_tin)
+        self.assertFalse(any(e.code == "M3-SHARED-CLINICIAN-ACROSS-TINS" for e in pkg_same.advisory_score.evidence_items))
+
+        pkg_diff = cp1.evaluate_application(app_diff_tin)
+        clin_evs = [e for e in pkg_diff.advisory_score.evidence_items if e.code == "M3-SHARED-CLINICIAN-ACROSS-TINS"]
+        self.assertEqual(len(clin_evs), 1)
+        self.assertIn("APP-CLIN-A", clin_evs[0].details["linked_applications"])
+
+    def test_dry_run_and_idempotency_key_do_not_mutate_or_duplicate(self):
+        """Read-only dry_run scoring leaves pipeline state untouched; idempotency_key returns cached result."""
+        from ebv_detector.api.server import EBVServer
+
+        srv = EBVServer()
+        cohort_before = len(srv.cp1._application_cohort)
+        audit_before = len(srv.cp1.audit_logger.get_all_records())
+
+        dry_payload = {
+            "legal_business_name": "Sandbox Probe Health LLC",
+            "npi": "1909990001",
+            "tin": "56-8880001",
+            "service_category": "FAMILY_PRACTICE",
+            "formation_date": "2018-01-01",
+            "application_date": "2026-02-01",
+            "dry_run": True,
+            "primary_address": {"address_line1": "500 Oak St", "city": "Cary", "state": "NC", "zip5": "27511"}
+        }
+        dry_res = srv.evaluate_enrollment(dry_payload)
+        self.assertTrue(dry_res["dry_run"])
+        self.assertEqual(dry_res["audit_record"]["record_id"], "DRY-RUN")
+        self.assertEqual(len(srv.cp1._application_cohort), cohort_before)
+        self.assertEqual(len(srv.cp1.audit_logger.get_all_records()), audit_before)
+        self.assertIsNone(srv.cp1.graph_store.get_node("1909990001"))
+
+        idem_payload = dict(dry_payload, dry_run=False, idempotency_key="KEY-REQ-12345")
+        first = srv.evaluate_enrollment(idem_payload)
+        cohort_after_first = len(srv.cp1._application_cohort)
+        audit_after_first = len(srv.cp1.audit_logger.get_all_records())
+
+        second = srv.evaluate_enrollment(idem_payload)
+        self.assertEqual(first["application_id"], second["application_id"])
+        self.assertEqual(first["audit_record"]["record_id"], second["audit_record"]["record_id"])
+        self.assertEqual(len(srv.cp1._application_cohort), cohort_after_first)
+        self.assertEqual(len(srv.cp1.audit_logger.get_all_records()), audit_after_first)
+
+    def test_near_match_queue_adjudication_decouple_and_link_feedback(self):
+        """Human DECOUPLE lowers near-match risk score; LINK upgrades to verified fact and raises score."""
+        from ebv_detector.entity_resolution.near_match_queue import AdjudicationAction
+
+        cp1 = Checkpoint1Pipeline(self.config, [])
+        base = ProviderApplication(
+            application_id="APP-NM-1",
+            npi="1902000001",
+            legal_business_name="Carolina Behavioral Care LLC",
+            dba_name="CBC Health",
+            tin="56-3000001",
+            formation_date="2018-01-01",
+            application_date="2026-02-01",
+            phone="919-555-7777",
+            primary_address=AddressRecord("400 Elm St", "Raleigh", "NC", "27601", rdi="COMMERCIAL"),
+            eft_account=EFTAccount("053100099", "8877665544"),
+        )
+        # Shares phone + EFT + similar DBA but different NPI/TIN -> hard conflict triggers NearMatchQueue
+        candidate = ProviderApplication(
+            application_id="APP-NM-2",
+            npi="1902000002",
+            legal_business_name="Triangle Wellness Associates LLC",
+            dba_name="CBC Health Services",
+            tin="56-3000002",
+            formation_date="2018-01-01",
+            application_date="2026-02-01",
+            phone="919-555-7777",
+            primary_address=AddressRecord("400 Elm St", "Raleigh", "NC", "27601", rdi="COMMERCIAL"),
+            eft_account=EFTAccount("053100099", "8877665544"),
+        )
+        cp1.evaluate_application(base)
+        pkg2 = cp1.evaluate_application(candidate)
+        self.assertEqual(len(pkg2.near_matches), 1)
+        q_item_id = pkg2.near_matches[0].item_id
+        initial_score = pkg2.advisory_score.priority_score
+        self.assertGreater(initial_score, 0.0)
+
+        # LINK increases score and marks verified high-confidence link
+        link_out = cp1.adjudicate_near_match(q_item_id, AdjudicationAction.LINK, "REV-1", "Confirmed common owner")
+        linked_pkg2 = link_out["updated_evaluations"]["APP-NM-2"]
+        self.assertGreater(linked_pkg2.advisory_score.priority_score, initial_score)
+        self.assertTrue(any(
+            e.code == "M1-RESOLVER-HIGH-CONFIDENCE-LINK" and e.verified_fact
+            for e in linked_pkg2.advisory_score.evidence_items
+        ))
+
+        # DECOUPLE clears the near-match alert and reduces score back down
+        decouple_out = cp1.adjudicate_near_match(q_item_id, AdjudicationAction.DECOUPLE, "REV-1", "Validated distinct practice")
+        decoupled_pkg2 = decouple_out["updated_evaluations"]["APP-NM-2"]
+        self.assertEqual(decoupled_pkg2.advisory_score.priority_score, 0.0)
+
+    def test_parent_organization_rules_and_dba_matching(self):
+        """Disclosed parent_organizations checked for exclusions/unverified entities; dba_name compared in ER."""
+        app_unverified = ProviderApplication(
+            application_id="APP-PAR-1",
+            npi="1903000001",
+            legal_business_name="Sub Clinic One LLC",
+            dba_name="Shared Brand Rehab",
+            tin="56-4000001",
+            formation_date="2018-01-01",
+            application_date="2026-02-01",
+            parent_organizations=["UNDISCLOSED_HOLDING_LLC"],
+            primary_address=AddressRecord("10 Pine St", "Cary", "NC", "27511", rdi="COMMERCIAL"),
+        )
+        dec1 = self.l1_engine.evaluate_application(app_unverified, indirect_ownership_results=[])
+        self.assertEqual(dec1.status, DecisionStatus.REVIEW_REQUIRED)
+        self.assertTrue(any(e.code == "L1-UNVERIFIED-PARENT-ORG" for e in dec1.verified_facts))
+
+        app_excluded_parent = ProviderApplication(
+            application_id="APP-PAR-2",
+            npi="1903000002",
+            legal_business_name="Sub Clinic Two LLC",
+            dba_name="Shared Brand Rehab",
+            tin="56-4000002",
+            formation_date="2018-01-01",
+            application_date="2026-02-01",
+            parent_organizations=[self.active_seed.identifier_value],
+            primary_address=AddressRecord("10 Pine St", "Cary", "NC", "27511", rdi="COMMERCIAL"),
+        )
+        dec2 = self.l1_engine.evaluate_application(app_excluded_parent, indirect_ownership_results=[])
+        self.assertEqual(dec2.status, DecisionStatus.GROUNDS_PENDING_HUMAN_DECISION)
+        self.assertTrue(any(e.code == "L1-DISCLOSED-PARENT-ORG-EXCLUDED" for e in dec2.verified_facts))
+
+        resolver = FellegiSunterResolver(self.config.entity_resolution)
+        pair_res = resolver.compare_pair(app_unverified, app_excluded_parent, "ADDR")
+        self.assertGreaterEqual(pair_res.field_level_comparisons["legal_name"], 0.99)
+
+    def test_scenario5_ramp_cusum_and_patient_migration_roster_share(self):
+        """Scenario 5 exceeds $250k ramp + triggers CUSUM alarm; large hospital migration below 20% share stays clean."""
+        from ebv_detector.synthetic.generator import SyntheticEBVGenerator
+
+        ds = SyntheticEBVGenerator(seed=42).generate_benchmark_suite()
+        cp2 = Checkpoint2Pipeline(self.config)
+        scen5_app = next(a for a in ds.applications if "TRIANGLE CRISIS" in a.legal_business_name.upper())
+        scen5_claims = [c for c in ds.claims if c.billing_provider_npi == scen5_app.npi]
+        # Register 2 rounds so CUSUM builds above threshold > 5.0
+        sig1 = cp2.evaluate_provider_early_billing(scen5_app, months_enrolled=3, claims=scen5_claims)
+        self.assertTrue(sig1.ramp_result.is_ramp_anomaly)
+        self.assertTrue(sig1.ramp_result.cusum_alarm)
+        self.assertGreater(sig1.ramp_result.total_paid_30d, 1_000_000.0)
+        self.assertGreater(sig1.surveillance_priority_score, 80.0)
+        self.assertIn("RECOMMEND_CREDIBLE_ALLEGATION_REVIEW", sig1.recommended_cpmm_action)
+
+        # PatientMigrationDetector should NOT false-positive on large 500-patient clinic absorbing 25 transfers (5% < 20%)
+        mig = PatientMigrationDetector(self.config.claims)
+        mig.register_sanctioned_provider("1999000001")
+        large_target_claims = [
+            ClaimRecord(f"C-S-{i}", "1999000001", "CL1", f"B-{i}", "2026-01-01", "H0015", 1, 100.0, 1.0)
+            for i in range(25)
+        ]
+        target_claims = [
+            ClaimRecord(f"C-T-{i}", "1999000002", "CL2", f"B-{i}", "2026-03-01", "H0015", 1, 100.0, 1.0)
+            for i in range(25)
+        ] + [
+            ClaimRecord(f"C-T-OWN-{i}", "1999000002", "CL2", f"OWN-{i}", "2026-03-01", "H0015", 1, 100.0, 1.0)
+            for i in range(475)
+        ]
+        mig.ingest_claims(large_target_claims + target_claims)
+        evs = mig.evaluate_patient_migration("1999000002")
+        self.assertEqual(len(evs), 0)
+
+    def test_edge_type_weighted_ppr_percentile_and_sqlite_export_seeds(self):
+        """PPR applies semantic edge-type weights + percentile rank; inspect_db exports all base seeds."""
+        import tempfile
+        from pathlib import Path
+        from ebv_detector.graph.risk_propagation import SeedRiskPropagator
+        from ebv_detector.graph.schema import EdgeType, GraphEdge, GraphNode, NodeType
+        from ebv_detector.graph.store import GraphStore
+        from ebv_detector.graph.supernodes import SupernodeManager
+        import inspect_db
+
+        store = GraphStore()
+        try:
+            store.add_node(GraphNode("SEED-1", NodeType.SEED, "Seed", is_seed=True, seed_source="LEIE"))
+            store.add_node(GraphNode("P-OWNER", NodeType.PROVIDER, "Owner Linked"))
+            store.add_node(GraphNode("P-EMAIL", NodeType.PROVIDER, "Email Linked"))
+            store.add_edge(GraphEdge("SEED-1", "P-OWNER", EdgeType.DIRECT_OWNERSHIP))
+            store.add_edge(GraphEdge("SEED-1", "P-EMAIL", EdgeType.USES_EMAIL))
+
+            sup = SupernodeManager(store)
+            prop = SeedRiskPropagator(store, sup)
+            ppr = prop.compute_personalized_pagerank()
+            self.assertGreater(ppr["P-OWNER"], ppr["P-EMAIL"])
+            self.assertEqual(prop.get_percentile_risk("P-OWNER", ppr), 0.5)
+            self.assertEqual(prop.get_percentile_risk("P-EMAIL", ppr), 0.0)
+        finally:
+            store.conn.close()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = str(Path(tmpdir) / "test_export.db")
+            exported_store = inspect_db.build_live_database(db_path=db_path)
+            try:
+                cur = exported_store.conn.cursor()
+                cur.execute("SELECT COUNT(*) FROM graph_nodes WHERE is_seed = 1")
+                seed_cnt = cur.fetchone()[0]
+            finally:
+                exported_store.conn.close()
+            self.assertGreaterEqual(seed_cnt, 6)
+
+
 
 if __name__ == "__main__":
     unittest.main()

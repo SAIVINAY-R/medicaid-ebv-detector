@@ -137,9 +137,15 @@ class FellegiSunterResolver:
                 positive_weight += w
 
         # 1. Compare Legal / DBA Names
+        names_a = [n for n in (app_a.legal_business_name, app_a.dba_name) if n]
+        names_b = [n for n in (app_b.legal_business_name, app_b.dba_name) if n]
         name_sim = max(
-            jaro_winkler_similarity(app_a.legal_business_name, app_b.legal_business_name),
-            token_set_similarity(app_a.legal_business_name, app_b.legal_business_name)
+            (
+                max(jaro_winkler_similarity(na, nb), token_set_similarity(na, nb))
+                for na in names_a
+                for nb in names_b
+            ),
+            default=0.0,
         )
         field_sims["legal_name"] = name_sim
         add_weight(self.field_weights["legal_name"].calculate_weight(

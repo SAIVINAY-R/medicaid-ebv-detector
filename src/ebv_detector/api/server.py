@@ -16,6 +16,7 @@ import sys
 import traceback
 from typing import Any, Dict, List, Optional
 from urllib.parse import parse_qs, urlparse
+import uuid
 
 from ..config import SystemConfig
 from ..models.entities import (
@@ -317,6 +318,7 @@ class EBVServer:
                 self.cp1.evaluate_application(app)
 
         self.httpd: Optional[ThreadingHTTPServer] = None
+        self._idempotency_cache: Dict[str, Dict[str, Any]] = {}
 
     def get_sample_scenarios(self) -> Dict[str, Any]:
         """Format demonstration scenarios for UI dropdown."""
@@ -413,7 +415,11 @@ class EBVServer:
         return scenarios
 
     def evaluate_enrollment(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """Process enrollment screening application through Checkpoint 1."""
+        """Process enrollment screening application through Checkpoint 1 (supports dry_run and idempotency_key)."""
+        idem_key = payload.get("idempotency_key")
+        dry_run = bool(payload.get("dry_run", False))
+        if isinstance(idem_key, str) and idem_key and not dry_run and idem_key in self._idempotency_cache:
+            return self._idempotency_cache[idem_key]
         raw_addr = payload.get("primary_address")
         addr = None
         if isinstance(raw_addr, dict) and any(
@@ -456,7 +462,7 @@ class EBVServer:
                 ))
 
         npi = str(payload.get("npi") or "1900000001").strip()
-        app_id = payload.get("application_id") or (f"APP-{npi[-6:]}" if len(npi) >= 6 else "APP-000001")
+        app_id = payload.get("application_id") or f"APP-{uuid.uuid4().hex[:8].upper()}"
         app = ProviderApplication(
             application_id=app_id,
             npi=npi,
@@ -501,10 +507,14 @@ class EBVServer:
             )
             self.cp1.ingest_ownership_edges([edge1, edge2])
 
-        eval_pkg = self.cp1.evaluate_application(app)
+        if dry_run:
+            eval_pkg = self.cp1.score_application(app, record_audit=False, enqueue_near_matches=False)
+        else:
+            eval_pkg = self.cp1.evaluate_application(app)
 
-        return {
+        response = {
             "application_id": eval_pkg.application_id,
+            "dry_run": dry_run,
             "layer1_decision": {
                 "status": eval_pkg.layer1_decision.status.value,
                 "assigned_aca_risk_tier": eval_pkg.layer1_decision.assigned_aca_risk_tier,
@@ -530,6 +540,7 @@ class EBVServer:
             },
             "audit_record": {
                 "record_id": eval_pkg.audit_record.record_id,
+                "snapshot_id": eval_pkg.audit_record.snapshot_id,
                 "timestamp_utc": eval_pkg.audit_record.timestamp_utc,
                 "feature_vector_sha256": eval_pkg.audit_record.feature_vector_sha256,
                 "audit_hash": eval_pkg.audit_record.audit_hash
@@ -545,6 +556,9 @@ class EBVServer:
                 for ind in eval_pkg.indirect_ownership
             ]
         }
+        if isinstance(idem_key, str) and idem_key and not dry_run:
+            self._idempotency_cache[idem_key] = response
+        return response
 
     def evaluate_claims(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Simulate claims surveillance through Checkpoint 2."""
@@ -634,6 +648,7 @@ class EBVServer:
         return {
             "provider_npi": sig.provider_npi,
             "months_enrolled": sig.months_enrolled,
+            "surveillance_priority_score": sig.surveillance_priority_score,
             "recommended_cpmm_action": sig.recommended_cpmm_action,
             "trigger_unannounced_site_visit": sig.trigger_unannounced_site_visit,
             "trigger_payment_suspension": sig.trigger_payment_suspension,

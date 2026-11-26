@@ -313,6 +313,55 @@ class Layer1RulesEngine:
                         }
                     ))
 
+        # 9b. Evaluate Disclosed Parent Organizations (Audit §3.7)
+        verified_upstreams = {
+            ind.upstream_entity_id.strip().upper()
+            for ind in (indirect_ownership_results or [])
+        }
+        for parent_org in (app.parent_organizations or []):
+            p_raw = (parent_org or "").strip()
+            if not p_raw:
+                continue
+            p_norm = p_raw.upper()
+            p_digits = re.sub(r"\D", "", p_raw)
+            matching_seeds = [
+                s for s in self.seeds
+                if s.identifier_value.strip().upper() == p_norm
+                or (p_digits and s.identifier_type in ("NPI", "TIN") and re.sub(r"\D", "", s.identifier_value) == p_digits)
+            ]
+            direct_parent_seed = self._find_active_seed(matching_seeds, app.application_date)
+            if direct_parent_seed:
+                statutory_grounds.append(
+                    f"42 CFR 455.104 / 455.416 - Disclosed parent organization '{p_raw}' matches sanctioned entity"
+                )
+                verified_facts.append(EvidenceItem(
+                    code="L1-DISCLOSED-PARENT-ORG-EXCLUDED",
+                    description=(
+                        f"Disclosed parent organization '{p_raw}' matches active exclusion/sanction seed "
+                        f"({direct_parent_seed.source}: {direct_parent_seed.reason})."
+                    ),
+                    source_layer="LAYER_1",
+                    severity=EvidenceSeverity.CRITICAL,
+                    verified_fact=True,
+                    fact_key=f"OWNER:{p_norm}",
+                    family="OWNERSHIP",
+                    details={"parent_organization": p_raw, "seed_id": direct_parent_seed.seed_id}
+                ))
+            elif p_norm not in verified_upstreams:
+                verified_facts.append(EvidenceItem(
+                    code="L1-UNVERIFIED-PARENT-ORG",
+                    description=(
+                        f"Disclosed parent organization '{p_raw}' has no verified indirect ownership chain "
+                        "in corporate hierarchy registry. Manual beneficial ownership verification required."
+                    ),
+                    source_layer="LAYER_1",
+                    severity=EvidenceSeverity.MEDIUM,
+                    verified_fact=True,
+                    fact_key=f"PARENT:{p_norm}",
+                    family="OWNERSHIP",
+                    details={"parent_organization": p_raw}
+                ))
+
         # 10. Determine Decision Status (Pending human adjudicative confirmation)
         if len(statutory_grounds) > 0:
             status = DecisionStatus.GROUNDS_PENDING_HUMAN_DECISION

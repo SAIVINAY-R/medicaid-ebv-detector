@@ -70,13 +70,15 @@ class PatientMigrationDetector:
             shared_patients = target_patients & sanctioned_patients
             total_unique = target_patients | sanctioned_patients
             jaccard = len(shared_patients) / len(total_unique) if total_unique else 0.0
+            share_of_target = len(shared_patients) / len(target_patients) if target_patients else 0.0
 
-            # Trigger condition: high Jaccard OR large absolute count of patients transferred
+            # Trigger when Jaccard overlap is high, OR when an absolute block of >= min_count patients
+            # represents a meaningful share (>= 20%) of the new provider's active roster (§3.5).
             if (
                 jaccard >= self.config.patient_migration_jaccard_threshold
-                or len(shared_patients) >= self.config.patient_migration_min_count
+                or (len(shared_patients) >= self.config.patient_migration_min_count and share_of_target >= 0.20)
             ):
-                pct_of_target = (len(shared_patients) / len(target_patients)) * 100.0
+                pct_of_target = share_of_target * 100.0
                 evidence.append(EvidenceItem(
                     code="CP2-PATIENT-COHORT-MIGRATION",
                     description=(
@@ -93,6 +95,7 @@ class PatientMigrationDetector:
                         "sanctioned_provider_npi": sanctioned_npi,
                         "shared_patient_count": len(shared_patients),
                         "total_target_patients": len(target_patients),
+                        "target_roster_share": round(share_of_target, 3),
                         "jaccard_similarity": round(jaccard, 3),
                         "threshold_jaccard": self.config.patient_migration_jaccard_threshold,
                         "threshold_count": self.config.patient_migration_min_count,

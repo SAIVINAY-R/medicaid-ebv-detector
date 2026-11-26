@@ -8,6 +8,7 @@ Monitors providers during their first 6-12 months of billing:
 """
 
 from dataclasses import dataclass, field
+import math
 from typing import Dict, List, Optional
 
 from ..claims.billing_rules import evaluate_hard_billing_edits
@@ -26,6 +27,7 @@ class Checkpoint2SignalPackage:
     ramp_result: RampAnomalyResult
     patient_migration_evidence: List[EvidenceItem] = field(default_factory=list)
     total_evidence_items: List[EvidenceItem] = field(default_factory=list)
+    surveillance_priority_score: float = 0.0
     recommended_cpmm_action: str = "CONTINUE_STANDARD_MONITORING"
     trigger_unannounced_site_visit: bool = False
     trigger_payment_suspension: bool = False
@@ -71,7 +73,18 @@ class Checkpoint2Pipeline:
         # 4. Synthesize all evidence
         all_evidence: List[EvidenceItem] = list(ramp_res.evidence_items) + list(migration_evidence)
 
-        # 5. Determine recommended enrollment action
+        # 5. Compute bounded post-enrollment surveillance priority score (isolated from enrollment score)
+        sev_weights = {
+            EvidenceSeverity.CRITICAL: 4.5,
+            EvidenceSeverity.HIGH: 2.5,
+            EvidenceSeverity.MEDIUM: 1.5,
+            EvidenceSeverity.LOW: 0.75,
+            EvidenceSeverity.INFO: 0.0,
+        }
+        raw_s = sum(sev_weights.get(e.severity, 1.0) for e in all_evidence)
+        surv_score = round(100.0 * (1.0 - math.exp(-raw_s / 4.0)), 1) if raw_s > 0.0 else 0.0
+
+        # 6. Determine recommended enrollment / PI human evaluation action
         has_critical = any(e.severity == EvidenceSeverity.CRITICAL for e in all_evidence)
         trigger_site_visit = False
         trigger_suspension = False
@@ -84,14 +97,14 @@ class Checkpoint2Pipeline:
             or ramp_res.deceased_overlap_count > 0
             or len(migration_evidence) > 0
         ):
-            action = "CREDIBLE_ALLEGATION_OF_FRAUD_REFERRAL (42 CFR 455.23 Payment Suspension Evaluation)"
+            action = "RECOMMEND_CREDIBLE_ALLEGATION_REVIEW (Human 42 CFR 455.23 Payment Suspension Evaluation)"
             trigger_suspension = True
             trigger_site_visit = True
         elif ramp_res.is_ramp_anomaly:
-            action = "OFF_CYCLE_REVALIDATION_AND_UNANNOUNCED_SITE_VISIT"
+            action = "RECOMMEND_OFF_CYCLE_REVALIDATION_AND_SITE_VISIT"
             trigger_site_visit = True
         elif len(all_evidence) > 0:
-            action = "ENHANCED_OVERSIGHT_DESK_AUDIT"
+            action = "RECOMMEND_ENHANCED_OVERSIGHT_DESK_AUDIT"
 
         return Checkpoint2SignalPackage(
             provider_npi=app.npi,
@@ -99,6 +112,7 @@ class Checkpoint2Pipeline:
             ramp_result=ramp_res,
             patient_migration_evidence=migration_evidence,
             total_evidence_items=all_evidence,
+            surveillance_priority_score=surv_score,
             recommended_cpmm_action=action,
             trigger_unannounced_site_visit=trigger_site_visit,
             trigger_payment_suspension=trigger_suspension

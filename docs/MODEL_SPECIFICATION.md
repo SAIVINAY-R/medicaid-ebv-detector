@@ -17,8 +17,8 @@ This system shifts fraud prevention from retrospective "pay-and-chase" audits to
 2. **Checkpoint 2 (Rapid Post-Enrollment Claims Surveillance):** Monitors the first 30 to 90 days of claims billing for impossible physical edits, robust statistical velocity spikes, and bipartite patient cohort recycling.
 
 To comply with federal due process (**42 CFR §455**) and state contract constraints (**NC RFP Attachment C §3**), the architecture strictly adheres to **Architectural Decision Record 0001 (ADR-0001)**:
-- **Layer 1 (Authoritative Deterministic Gate):** Deterministic rules evaluating statutory exclusion grounds (§455.416) and physical address bans.
-- **Layer 2 (Assistive Advisory Scorer):** Seven specialized machine learning and statistical models that compute an explainable **Advisory Priority Score (0–100)** and recommend **ACA Risk Tiers (§455.450)** while preserving human adjudicative authority.
+- **Layer 1 (Authoritative Deterministic Gate):** Deterministic rules evaluating statutory exclusion grounds (§455.416), physical address bans, and setting authoritative **ACA Risk Tiers (§455.450)**.
+- **Layer 2 (Assistive Advisory Scorer):** Calibrated statistical and graph models that compute an explainable **Advisory Priority Score (0–100)** with canonical `fact_key` de-duplication across six evidence families for human investigator queue prioritization while preserving human adjudicative authority.
 
 ---
 
@@ -63,7 +63,7 @@ Human Investigator Adjudication (HITL)
 | **M4-B** | **MinHash LSH Document NLP** | Dimensionality Reduction / LSH | `anomaly/template.py` | $m=128$ Universal Hash permutations | State Anti-Fraud |
 | **CP2-A** | **Robust MAD Z-Score Model** | Non-Parametric Outlier Model | `claims/ramp_detector.py` | Robust $Z = (X - \text{median}) / (1.4826 \cdot \text{MAD})$ | 42 CFR §455.23 |
 | **CP2-B** | **Bipartite Cohort Migration** | Bipartite Network Projection | `claims/patient_sharing.py` | Bipartite Jaccard set intersection | 42 CFR §455.23 |
-| **L2** | **Calibrated Additive Scorer** | Multi-Criteria Scoring | `pipeline/layer2_advisory.py` | Bounded additive evidence weights ($0-100$) | 42 CFR §455.450 |
+| **L2** | **Calibrated Saturating Scorer** | Multi-Criteria Scoring | `pipeline/layer2_advisory.py` | De-duplicated family caps + saturating $1 - e^{-S/\tau}$ ($0-100$) | ADR-0001 Priority Queue |
 
 ---
 

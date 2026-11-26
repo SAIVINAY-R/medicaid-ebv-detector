@@ -37,6 +37,9 @@ class BenchmarkReport:
     review_burden_pct: float
     scenario_detection_rates: Dict[str, bool] = field(default_factory=dict)
     detailed_results: List[Dict[str, Any]] = field(default_factory=list)
+    precision_at_10: float = 0.0
+    pr_auc: float = 0.0
+    score_only_ablation_f1: float = 0.0
 
     def print_summary(self):
         """Display formatted markdown evaluation summary."""
@@ -55,6 +58,8 @@ class BenchmarkReport:
         print(f"Precision:                    {self.precision:.1%}")
         print(f"Recall (Sensitivity):         {self.recall:.1%}")
         print(f"F1 Score:                     {self.f1_score:.3f}")
+        print(f"Precision@10 / PR-AUC:        {self.precision_at_10:.1%} / {self.pr_auc:.3f}")
+        print(f"Score-Only Ablation F1:       {self.score_only_ablation_f1:.3f}")
         print(f"False Positive Rate (FPR):    {self.false_positive_rate:.1%}")
         print(f"Review Burden on Clean Apps:  {self.review_burden_pct:.1%}")
         print(f"Average Evaluation Latency:   {self.average_latency_ms:.2f} ms / app")
@@ -97,17 +102,24 @@ class EvaluationHarness:
         # Ingest prior claims into CP2 for patient sharing
         cp2.ingest_claims(dataset.claims)
 
-        tp, fp, tn, fn = 0, 0, 0, 0
+        # Pre-register non-fraud peer monthly claim volumes for robust Z benchmarking
+        for app in dataset.applications:
+            if dataset.ground_truth.get(app.application_id) != "EBV_FRAUD":
+                p_claims = claims_by_npi.get(app.npi, [])
+                if p_claims:
+                    cp2.ramp_detector.register_peer_monthly_volume(
+                        app.service_category, 3, sum(c.paid_amount for c in p_claims)
+                    )
+
         total_time_ms = 0.0
-        scenario_results: Dict[str, bool] = {}
-        detailed: List[Dict[str, Any]] = []
+        eval_rows: List[Tuple[Any, Any, Any, float]] = []
 
         for app in dataset.applications:
             start_t = time.perf_counter()
-            
+
             # 1. Run Checkpoint 1
             cp1_out = cp1.evaluate_application(app)
-            
+
             # 2. Run Checkpoint 2 if claims exist for provider
             p_claims = claims_by_npi.get(app.npi, [])
             cp2_out = None
@@ -116,9 +128,17 @@ class EvaluationHarness:
 
             elapsed_ms = (time.perf_counter() - start_t) * 1000.0
             total_time_ms += elapsed_ms
+            eval_rows.append((app, cp1_out, cp2_out, elapsed_ms))
 
-            # Determine whether system flagged this provider as requiring adverse intervention
-            # Flags: Layer 1 adverse status OR Advisory Risk Level HIGH/CRITICAL OR CP2 critical claims alert
+        tp, fp, tn, fn = 0, 0, 0, 0
+        ab_tp, ab_fp, ab_fn = 0, 0, 0
+        scenario_results: Dict[str, bool] = {}
+        detailed: List[Dict[str, Any]] = []
+
+        for app, initial_cp1, cp2_out, elapsed_ms in eval_rows:
+            # Read back final ring-rescored evaluation so early ring members reflect full ring context
+            cp1_out = cp1.get_latest_evaluation(app.application_id) or initial_cp1
+
             is_flagged = (
                 cp1_out.layer1_decision.status in (
                     DecisionStatus.REVIEW_REQUIRED,
@@ -131,19 +151,29 @@ class EvaluationHarness:
 
             is_actual_fraud = (dataset.ground_truth.get(app.application_id) == "EBV_FRAUD")
             scen_desc = dataset.scenario_metadata.get(app.application_id, "Unknown Scenario")
+            unified_score = max(
+                cp1_out.advisory_score.priority_score,
+                cp2_out.surveillance_priority_score if cp2_out is not None else 0.0
+            )
+            ablation_flagged = unified_score >= 50.0
 
             if is_actual_fraud:
                 if is_flagged:
                     tp += 1
-                    scenario_results[scen_desc] = True
                 else:
                     fn += 1
-                    scenario_results[scen_desc] = False
+                scenario_results[scen_desc] = scenario_results.get(scen_desc, True) and is_flagged
+                if ablation_flagged:
+                    ab_tp += 1
+                else:
+                    ab_fn += 1
             else:
                 if is_flagged:
                     fp += 1
                 else:
                     tn += 1
+                if ablation_flagged:
+                    ab_fp += 1
 
             detailed.append({
                 "application_id": app.application_id,
@@ -153,6 +183,7 @@ class EvaluationHarness:
                 "is_flagged": is_flagged,
                 "layer1_status": cp1_out.layer1_decision.status.value,
                 "priority_score": cp1_out.advisory_score.priority_score,
+                "unified_priority_score": round(unified_score, 1),
                 "risk_level": cp1_out.advisory_score.composite_risk_level,
                 "latency_ms": elapsed_ms
             })
@@ -167,6 +198,30 @@ class EvaluationHarness:
         fpr = fp / total_legit if total_legit > 0 else 0.0
         review_burden = fp / total_legit if total_legit > 0 else 0.0
         avg_lat = total_time_ms / total_apps if total_apps > 0 else 0.0
+
+        # Ranking metrics: Precision@10, step-wise PR-AUC, and score-only ablation F1
+        ranked = sorted(detailed, key=lambda r: r["unified_priority_score"], reverse=True)
+        top_k = min(10, len(ranked))
+        p_at_10 = (
+            sum(1 for r in ranked[:top_k] if r["ground_truth"] == "EBV_FRAUD") / top_k
+            if top_k > 0 else 0.0
+        )
+
+        pr_auc = 0.0
+        if total_fraud > 0:
+            cum_tp = 0
+            prev_rec = 0.0
+            for idx, r in enumerate(ranked, start=1):
+                if r["ground_truth"] == "EBV_FRAUD":
+                    cum_tp += 1
+                    cur_prec = cum_tp / idx
+                    cur_rec = cum_tp / total_fraud
+                    pr_auc += cur_prec * (cur_rec - prev_rec)
+                    prev_rec = cur_rec
+
+        ab_prec = ab_tp / (ab_tp + ab_fp) if (ab_tp + ab_fp) > 0 else 1.0
+        ab_rec = ab_tp / (ab_tp + ab_fn) if (ab_tp + ab_fn) > 0 else 0.0
+        ab_f1 = (2 * ab_prec * ab_rec) / (ab_prec + ab_rec) if (ab_prec + ab_rec) > 0 else 0.0
 
         return BenchmarkReport(
             total_applications=total_apps,
@@ -183,5 +238,8 @@ class EvaluationHarness:
             average_latency_ms=round(avg_lat, 2),
             review_burden_pct=round(review_burden, 4),
             scenario_detection_rates=scenario_results,
-            detailed_results=detailed
+            detailed_results=detailed,
+            precision_at_10=round(p_at_10, 4),
+            pr_auc=round(pr_auc, 4),
+            score_only_ablation_f1=round(ab_f1, 4),
         )

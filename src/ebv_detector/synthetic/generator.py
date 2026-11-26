@@ -654,7 +654,7 @@ class SyntheticEBVGenerator:
                 service_date=f"2026-03-{day:02d}",
                 procedure_code="H0015",
                 units_billed=hours * 4.0, # 15-min units
-                paid_amount=hours * 250.0, # Aggressive reimbursement rate
+                paid_amount=hours * 4500.0, # Zero-to-$3.35M 30-day ramp anomaly matching scenario target
                 service_hours=hours,
                 inpatient_overlap=is_inpatient,
                 beneficiary_deceased=is_deceased

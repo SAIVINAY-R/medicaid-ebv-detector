@@ -52,45 +52,66 @@ def evaluate_hard_billing_edits(
             impossible_hours_violations += 1
             violating_clinicians.add((clinician_npi, s_date, total_hours))
 
+    total_claims = max(1, len(claims))
+    impossible_rate_per_1k = round((impossible_hours_violations / total_claims) * 1000.0, 2)
+    inpatient_rate_per_1k = round((inpatient_violations / total_claims) * 1000.0, 2)
+    deceased_rate_per_1k = round((deceased_violations / total_claims) * 1000.0, 2)
+
     if impossible_hours_violations > 0:
         sample = list(violating_clinicians)[:3]
         sample_desc = ", ".join([f"{c} on {d} ({h:.1f}h)" for c, d, h in sample])
         evidence.append(EvidenceItem(
             code="CP2-BILLING-IMPOSSIBLE-HOURS",
             description=(
-                f"Detected {impossible_hours_violations} clinician-days exceeding 24 hours of service in a single day. "
+                f"Detected {impossible_hours_violations} clinician-days ({impossible_rate_per_1k}/1k claims) exceeding 24 hours of service in a single day. "
                 f"Sample: {sample_desc}. Strong indicator of fabricated billing."
             ),
             source_layer="CHECKPOINT_2_CLAIMS",
             severity=EvidenceSeverity.CRITICAL,
             verified_fact=True,
-            details={"violation_count": impossible_hours_violations, "sample_clinicians": [c for c, _, _ in sample]}
+            fact_key="CP2:IMPOSSIBLE_HOURS",
+            family="SUBMISSION",
+            details={
+                "violation_count": impossible_hours_violations,
+                "rate_per_1000_claims": impossible_rate_per_1k,
+                "sample_clinicians": [c for c, _, _ in sample]
+            }
         ))
 
     if inpatient_violations > 0:
         evidence.append(EvidenceItem(
             code="CP2-BILLING-INPATIENT-OVERLAP",
             description=(
-                f"Detected {inpatient_violations} claims billed for community services while beneficiary was an active "
+                f"Detected {inpatient_violations} claims ({inpatient_rate_per_1k}/1k claims) billed for community services while beneficiary was an active "
                 "hospital inpatient. Physical impossibility."
             ),
             source_layer="CHECKPOINT_2_CLAIMS",
             severity=EvidenceSeverity.CRITICAL,
             verified_fact=True,
-            details={"inpatient_violation_count": inpatient_violations}
+            fact_key="CP2:INPATIENT_OVERLAP",
+            family="SUBMISSION",
+            details={
+                "inpatient_violation_count": inpatient_violations,
+                "rate_per_1000_claims": inpatient_rate_per_1k
+            }
         ))
 
     if deceased_violations > 0:
         evidence.append(EvidenceItem(
             code="CP2-BILLING-POST-MORTEM",
             description=(
-                f"Detected {deceased_violations} claims billed with service dates following beneficiary date of death. "
+                f"Detected {deceased_violations} claims ({deceased_rate_per_1k}/1k claims) billed with service dates following beneficiary date of death. "
                 "Ghost billing confirmed."
             ),
             source_layer="CHECKPOINT_2_CLAIMS",
             severity=EvidenceSeverity.CRITICAL,
             verified_fact=True,
-            details={"deceased_violation_count": deceased_violations}
+            fact_key="CP2:POST_MORTEM",
+            family="SUBMISSION",
+            details={
+                "deceased_violation_count": deceased_violations,
+                "rate_per_1000_claims": deceased_rate_per_1k
+            }
         ))
 
     return evidence, impossible_hours_violations, inpatient_violations, deceased_violations
